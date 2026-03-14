@@ -26,6 +26,19 @@ describe("isExcluded", () => {
 		expect(isExcluded("notes/hello.md", patterns)).toBe(false);
 		expect(isExcluded("images/photo.png", patterns)).toBe(false);
 	});
+
+	it("returns false with empty patterns array", () => {
+		expect(isExcluded("anything.md", [])).toBe(false);
+	});
+
+	it("handles exact path pattern match", () => {
+		expect(isExcluded("secret/config.json", ["secret/config.json"])).toBe(true);
+		expect(isExcluded("secret/other.json", ["secret/config.json"])).toBe(false);
+	});
+
+	it("does not match partial directory names with /** pattern", () => {
+		expect(isExcluded(".obsidian-backup/file.md", patterns)).toBe(false);
+	});
 });
 
 describe("getParentPath", () => {
@@ -55,5 +68,14 @@ describe("collectFolderPaths", () => {
 	it("deduplicates shared parent paths", () => {
 		const result = collectFolderPaths(["a/b/c.md", "a/b/d.md"]);
 		expect(result).toEqual(["a", "a/b"]);
+	});
+
+	it("returns empty for empty input array", () => {
+		expect(collectFolderPaths([])).toEqual([]);
+	});
+
+	it("handles deeply nested paths (5+ levels)", () => {
+		const result = collectFolderPaths(["a/b/c/d/e/f.md"]);
+		expect(result).toEqual(["a", "a/b", "a/b/c", "a/b/c/d", "a/b/c/d/e"]);
 	});
 });

@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
-import { computeDiff, LocalFile, RemoteFile } from "../src/sync-engine";
-import { SyncRecord } from "../src/sync-state";
+import { describe, it, expect, vi } from "vitest";
+import { computeDiff, SyncEngine, LocalFile, RemoteFile } from "../src/sync-engine";
+import { SyncRecord, SyncState, createEmptySyncState } from "../src/sync-state";
 
 describe("computeDiff", () => {
 	it("skips unchanged files", () => {
@@ -300,5 +300,249 @@ describe("computeDiff", () => {
 				driveFolderId: "f1",
 			},
 		]);
+	});
+});
+
+// --- SyncEngine class tests ---
+
+function createMockVault(files: { path: string; mtime: number; content?: ArrayBuffer }[] = []) {
+	const fileMap = new Map(files.map((f) => [f.path, f]));
+	return {
+		getFiles: () =>
+			files.map((f) => ({
+				path: f.path,
+				stat: { mtime: f.mtime, ctime: f.mtime, size: 100 },
+				name: f.path.split("/").pop()!,
+				basename: f.path.split("/").pop()!.replace(/\.[^.]+$/, ""),
+				extension: f.path.split(".").pop()!,
+				vault: {} as any,
+				parent: null,
+			})),
+		adapter: {
+			readBinary: vi.fn(async (path: string) => fileMap.get(path)?.content ?? new ArrayBuffer(0)),
+			writeBinary: vi.fn(async () => {}),
+			exists: vi.fn(async () => true),
+			mkdir: vi.fn(async () => {}),
+			remove: vi.fn(async () => {}),
+			stat: vi.fn(async (path: string) => {
+				const f = fileMap.get(path);
+				return f ? { mtime: f.mtime, ctime: f.mtime, size: 100 } : null;
+			}),
+		},
+	} as any;
+}
+
+function createMockDriveApi(remoteFiles: { relativePath: string; id: string; modifiedTime: string }[] = []) {
+	return {
+		findOrCreateFolder: vi.fn(async () => "root-folder-id"),
+		listAllFilesRecursive: vi.fn(async (_rootId: string, folderIds?: Record<string, string>) => {
+			if (folderIds) folderIds[""] = "root-folder-id";
+			return remoteFiles.map((f) => ({
+				file: {
+					id: f.id,
+					name: f.relativePath.split("/").pop()!,
+					mimeType: "application/octet-stream",
+					modifiedTime: f.modifiedTime,
+					parents: ["root-folder-id"],
+				},
+				relativePath: f.relativePath,
+			}));
+		}),
+		uploadFile: vi.fn(async () => ({
+			id: "new-drive-id",
+			name: "file",
+			mimeType: "text/plain",
+			modifiedTime: new Date().toISOString(),
+		})),
+		downloadFile: vi.fn(async () => new ArrayBuffer(10)),
+		deleteFile: vi.fn(async () => {}),
+	} as any;
+}
+
+describe("SyncEngine", () => {
+	it("returns early with zero stats when sync is already in progress", async () => {
+		const vault = createMockVault();
+		const driveApi = createMockDriveApi();
+		const state = createEmptySyncState();
+		const saveSyncState = vi.fn(async () => {});
+
+		const engine = new SyncEngine(
+			vault,
+			driveApi,
+			() => ({ driveFolderName: "Vault", excludePatterns: [] }),
+			() => state,
+			saveSyncState
+		);
+
+		// Start first sync (will take some time)
+		const sync1 = engine.sync();
+		// Immediately start second sync — should return early
+		const result = await engine.sync();
+
+		expect(result).toEqual({ uploaded: 0, downloaded: 0, deleted: 0, errors: 0 });
+
+		// Wait for first sync to complete
+		await sync1;
+	});
+
+	it("isSyncing() returns true during sync", async () => {
+		const vault = createMockVault();
+		const driveApi = createMockDriveApi();
+		const state = createEmptySyncState();
+
+		const engine = new SyncEngine(
+			vault,
+			driveApi,
+			() => ({ driveFolderName: "Vault", excludePatterns: [] }),
+			() => state,
+			vi.fn(async () => {})
+		);
+
+		expect(engine.isSyncing()).toBe(false);
+		const syncPromise = engine.sync();
+		expect(engine.isSyncing()).toBe(true);
+		await syncPromise;
+		expect(engine.isSyncing()).toBe(false);
+	});
+
+	it("uploads new local files to Drive", async () => {
+		const vault = createMockVault([
+			{ path: "hello.md", mtime: 1000, content: new ArrayBuffer(5) },
+		]);
+		const driveApi = createMockDriveApi();
+		let savedState: SyncState | null = null;
+
+		const engine = new SyncEngine(
+			vault,
+			driveApi,
+			() => ({ driveFolderName: "Vault", excludePatterns: [] }),
+			() => createEmptySyncState(),
+			async (s) => { savedState = s; }
+		);
+
+		const stats = await engine.sync();
+
+		expect(stats.uploaded).toBe(1);
+		expect(stats.errors).toBe(0);
+		expect(driveApi.uploadFile).toHaveBeenCalledTimes(1);
+		expect(savedState).not.toBeNull();
+		expect(savedState!.records["hello.md"]).toBeDefined();
+	});
+
+	it("downloads new remote files to local", async () => {
+		const vault = createMockVault();
+		const driveApi = createMockDriveApi([
+			{ relativePath: "remote.md", id: "d1", modifiedTime: new Date(2000).toISOString() },
+		]);
+		let savedState: SyncState | null = null;
+
+		const engine = new SyncEngine(
+			vault,
+			driveApi,
+			() => ({ driveFolderName: "Vault", excludePatterns: [] }),
+			() => createEmptySyncState(),
+			async (s) => { savedState = s; }
+		);
+
+		const stats = await engine.sync();
+
+		expect(stats.downloaded).toBe(1);
+		expect(driveApi.downloadFile).toHaveBeenCalledWith("d1");
+		expect(vault.adapter.writeBinary).toHaveBeenCalledTimes(1);
+		expect(savedState!.records["remote.md"]).toBeDefined();
+	});
+
+	it("continues processing after a single file upload error", async () => {
+		const vault = createMockVault([
+			{ path: "fail.md", mtime: 1000 },
+			{ path: "success.md", mtime: 1000 },
+		]);
+		const driveApi = createMockDriveApi();
+
+		// First upload fails, second succeeds
+		let callCount = 0;
+		driveApi.uploadFile = vi.fn(async () => {
+			callCount++;
+			if (callCount === 1) throw new Error("Network error");
+			return {
+				id: "new-id",
+				name: "success.md",
+				mimeType: "text/plain",
+				modifiedTime: new Date().toISOString(),
+			};
+		});
+
+		const engine = new SyncEngine(
+			vault,
+			driveApi,
+			() => ({ driveFolderName: "Vault", excludePatterns: [] }),
+			() => createEmptySyncState(),
+			vi.fn(async () => {})
+		);
+
+		const stats = await engine.sync();
+
+		expect(stats.errors).toBe(1);
+		expect(stats.uploaded).toBe(1);
+		expect(driveApi.uploadFile).toHaveBeenCalledTimes(2);
+	});
+
+	it("resets syncInProgress even on unrecoverable error", async () => {
+		const vault = createMockVault();
+		const driveApi = createMockDriveApi();
+		driveApi.findOrCreateFolder = vi.fn(async () => {
+			throw new Error("Fatal error");
+		});
+
+		const engine = new SyncEngine(
+			vault,
+			driveApi,
+			() => ({ driveFolderName: "Vault", excludePatterns: [] }),
+			() => createEmptySyncState(),
+			vi.fn(async () => {})
+		);
+
+		await expect(engine.sync()).rejects.toThrow("Fatal error");
+		expect(engine.isSyncing()).toBe(false);
+	});
+
+	it("excludes files matching exclude patterns", async () => {
+		const vault = createMockVault([
+			{ path: ".obsidian/config", mtime: 1000 },
+			{ path: "notes/hello.md", mtime: 1000 },
+		]);
+		const driveApi = createMockDriveApi();
+
+		const engine = new SyncEngine(
+			vault,
+			driveApi,
+			() => ({ driveFolderName: "Vault", excludePatterns: [".obsidian/**"] }),
+			() => createEmptySyncState(),
+			vi.fn(async () => {})
+		);
+
+		const stats = await engine.sync();
+
+		expect(stats.uploaded).toBe(1); // Only hello.md, not .obsidian/config
+	});
+
+	it("saves sync state with updated lastSyncTimestamp", async () => {
+		const vault = createMockVault();
+		const driveApi = createMockDriveApi();
+		let savedState: SyncState | null = null;
+		const beforeSync = Date.now();
+
+		const engine = new SyncEngine(
+			vault,
+			driveApi,
+			() => ({ driveFolderName: "Vault", excludePatterns: [] }),
+			() => createEmptySyncState(),
+			async (s) => { savedState = s; }
+		);
+
+		await engine.sync();
+
+		expect(savedState).not.toBeNull();
+		expect(savedState!.lastSyncTimestamp).toBeGreaterThanOrEqual(beforeSync);
 	});
 });
