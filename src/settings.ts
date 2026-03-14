@@ -10,7 +10,6 @@ export interface GoogleDriveSyncSettings {
 	syncInterval: number;
 	driveFolderName: string;
 	excludePatterns: string[];
-	stateVersion: number;
 }
 
 export const DEFAULT_SETTINGS: GoogleDriveSyncSettings = {
@@ -22,15 +21,22 @@ export const DEFAULT_SETTINGS: GoogleDriveSyncSettings = {
 	syncInterval: 5,
 	driveFolderName: "Obsidian-Vault",
 	excludePatterns: [".obsidian/**", ".DS_Store", "Thumbs.db"],
-	stateVersion: 1,
 };
 
 export class GoogleDriveSyncSettingTab extends PluginSettingTab {
 	plugin: GoogleDriveSyncPlugin;
+	private saveTimeout: ReturnType<typeof setTimeout> | null = null;
 
 	constructor(app: App, plugin: GoogleDriveSyncPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
+	}
+
+	private debouncedSave(): void {
+		if (this.saveTimeout) clearTimeout(this.saveTimeout);
+		this.saveTimeout = setTimeout(() => {
+			this.plugin.saveSettings();
+		}, 500);
 	}
 
 	display(): void {
@@ -49,9 +55,9 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
 				text
 					.setPlaceholder("Enter Client ID")
 					.setValue(this.plugin.settings.clientId)
-					.onChange(async (value) => {
+					.onChange((value) => {
 						this.plugin.settings.clientId = value;
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					})
 			);
 
@@ -62,9 +68,9 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
 				text
 					.setPlaceholder("Enter Client Secret")
 					.setValue(this.plugin.settings.clientSecret)
-					.onChange(async (value) => {
+					.onChange((value) => {
 						this.plugin.settings.clientSecret = value;
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					})
 			);
 
@@ -113,9 +119,9 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
 				text
 					.setPlaceholder("Obsidian-Vault")
 					.setValue(this.plugin.settings.driveFolderName)
-					.onChange(async (value) => {
+					.onChange((value) => {
 						this.plugin.settings.driveFolderName = value;
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					})
 			);
 
@@ -126,12 +132,12 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
 				text
 					.setPlaceholder(".obsidian/**\n.DS_Store")
 					.setValue(this.plugin.settings.excludePatterns.join("\n"))
-					.onChange(async (value) => {
+					.onChange((value) => {
 						this.plugin.settings.excludePatterns = value
 							.split("\n")
 							.map((s) => s.trim())
 							.filter((s) => s.length > 0);
-						await this.plugin.saveSettings();
+						this.debouncedSave();
 					})
 			);
 	}

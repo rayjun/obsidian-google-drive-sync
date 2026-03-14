@@ -1,5 +1,6 @@
 import { requestUrl } from "obsidian";
 import http from "http";
+import crypto from "crypto";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -14,7 +15,7 @@ export interface TokenResponse {
 	token_type: string;
 }
 
-export function getAuthUrl(clientId: string): string {
+export function getAuthUrl(clientId: string, state: string): string {
 	const params = new URLSearchParams({
 		client_id: clientId,
 		redirect_uri: REDIRECT_URI,
@@ -22,55 +23,107 @@ export function getAuthUrl(clientId: string): string {
 		scope: SCOPES,
 		access_type: "offline",
 		prompt: "consent",
+		state,
 	});
 	return `${GOOGLE_AUTH_URL}?${params.toString()}`;
+}
+
+export function generateOAuthState(): string {
+	return crypto.randomBytes(16).toString("hex");
 }
 
 /**
  * Start a local HTTP server, open the browser for OAuth,
  * and return the authorization code.
+ * Verifies the state parameter to prevent CSRF attacks.
  */
-export function listenForAuthCode(): Promise<string> {
+export function listenForAuthCode(expectedState: string): Promise<string> {
 	return new Promise((resolve, reject) => {
+		let settled = false;
+
+		const settle = (fn: () => void) => {
+			if (!settled) {
+				settled = true;
+				clearTimeout(timeoutId);
+				fn();
+			}
+		};
+
 		const server = http.createServer((req, res) => {
 			const url = new URL(req.url ?? "", `http://localhost:${REDIRECT_PORT}`);
-			if (url.pathname === "/callback") {
-				const code = url.searchParams.get("code");
-				const error = url.searchParams.get("error");
 
-				res.writeHead(200, { "Content-Type": "text/html" });
-				if (code) {
-					res.end(
-						"<html><body><h1>Authorization successful!</h1><p>You can close this window.</p></body></html>"
-					);
-					server.close();
-					resolve(code);
-				} else {
-					res.end(
-						`<html><body><h1>Authorization failed</h1><p>${error ?? "Unknown error"}</p></body></html>`
-					);
-					server.close();
-					reject(new Error(error ?? "No authorization code received"));
-				}
+			if (url.pathname !== "/callback") {
+				res.writeHead(404, { "Content-Type": "text/plain" });
+				res.end("Not found");
+				return;
+			}
+
+			const code = url.searchParams.get("code");
+			const error = url.searchParams.get("error");
+			const state = url.searchParams.get("state");
+
+			res.writeHead(200, { "Content-Type": "text/html" });
+
+			if (state !== expectedState) {
+				res.end(
+					"<html><body><h1>Authorization failed</h1><p>Invalid state parameter (possible CSRF attack).</p></body></html>"
+				);
+				server.close();
+				settle(() =>
+					reject(new Error("OAuth state mismatch — possible CSRF attack"))
+				);
+				return;
+			}
+
+			if (code) {
+				res.end(
+					"<html><body><h1>Authorization successful!</h1><p>You can close this window.</p></body></html>"
+				);
+				server.close();
+				settle(() => resolve(code));
+			} else {
+				res.end(
+					`<html><body><h1>Authorization failed</h1><p>${error ?? "Unknown error"}</p></body></html>`
+				);
+				server.close();
+				settle(() =>
+					reject(new Error(error ?? "No authorization code received"))
+				);
 			}
 		});
 
-		server.listen(REDIRECT_PORT, () => {
-			// Server ready
+		server.listen(REDIRECT_PORT, "127.0.0.1", () => {
+			// Server ready, bound to localhost only
 		});
 
 		server.on("error", (err) => {
-			reject(
-				new Error(`Failed to start OAuth callback server: ${err.message}`)
+			settle(() =>
+				reject(
+					new Error(
+						`Failed to start OAuth callback server: ${err.message}`
+					)
+				)
 			);
 		});
 
 		// Timeout after 5 minutes
-		setTimeout(() => {
+		const timeoutId = setTimeout(() => {
 			server.close();
-			reject(new Error("OAuth authorization timed out"));
+			settle(() => reject(new Error("OAuth authorization timed out")));
 		}, 5 * 60 * 1000);
 	});
+}
+
+/**
+ * Validate a token response from Google and throw on errors.
+ */
+function validateTokenResponse(json: Record<string, unknown>): TokenResponse {
+	if (json.error) {
+		throw new Error(
+			`OAuth error: ${(json.error_description as string) ?? json.error}`
+		);
+	}
+	return json as unknown as TokenResponse;
 }
 
 /**
@@ -93,7 +146,7 @@ export async function exchangeCodeForTokens(
 			grant_type: "authorization_code",
 		}).toString(),
 	});
-	return response.json as TokenResponse;
+	return validateTokenResponse(response.json);
 }
 
 /**
@@ -115,5 +168,5 @@ export async function refreshAccessToken(
 			grant_type: "refresh_token",
 		}).toString(),
 	});
-	return response.json as TokenResponse;
+	return validateTokenResponse(response.json);
 }

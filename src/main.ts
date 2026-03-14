@@ -6,6 +6,7 @@ import {
 } from "./settings";
 import {
 	getAuthUrl,
+	generateOAuthState,
 	listenForAuthCode,
 	exchangeCodeForTokens,
 	refreshAccessToken,
@@ -111,8 +112,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 		}
 
 		try {
-			const authUrl = getAuthUrl(this.settings.clientId);
-			const codePromise = listenForAuthCode();
+			const state = generateOAuthState();
+			const authUrl = getAuthUrl(this.settings.clientId, state);
+			const codePromise = listenForAuthCode(state);
 			window.open(authUrl);
 
 			new Notice("Waiting for Google authorization...");
