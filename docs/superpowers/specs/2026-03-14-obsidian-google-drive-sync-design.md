@@ -54,7 +54,22 @@ User creates an OAuth 2.0 Client ID in Google Cloud Console and enters `Client I
 
 `https://www.googleapis.com/auth/drive.file` — grants access only to files created or opened by this app, not the user's entire Drive.
 
+## First-Run / Initial Sync
+
+On first sync (empty `SyncState`):
+
+1. Plugin creates the root folder on Google Drive if it doesn't exist
+2. Plugin lists all local vault files and all files in the Drive root folder
+3. **Merge strategy**: For each file that exists on only one side, sync it to the other side. For files that exist on both sides with the same relative path, compare `modifiedTime` — the newer version wins.
+4. After initial sync completes, a full `SyncState` is built from the merged result.
+
+This means the plugin supports re-linking to an existing Drive folder (e.g., setting up a second device). Since `drive.file` scope only sees files created by the app, re-linking requires re-authorizing with the same OAuth client that originally created the files.
+
 ## Sync Engine
+
+### Concurrency Guard
+
+A `syncInProgress` flag prevents overlapping sync cycles. If the timer fires while a sync is running, the cycle is skipped. Manual sync requests while a sync is in progress show a notice: "Sync already in progress."
 
 ### SyncState Data Structure
 
@@ -77,6 +92,8 @@ Persisted via `plugin.saveData()`.
 
 ### Diff Algorithm
 
+A file is considered "modified" if its `mtime` (local) or `modifiedTime` (remote, in UTC) is newer than the `lastSyncedTime` recorded in the SyncRecord. All timestamps are compared in UTC. Local `mtime` is converted to UTC epoch ms for comparison against Google Drive's `modifiedTime` (which is already UTC).
+
 Three-way comparison: local current state, remote current state, last sync record.
 
 | Local Change | Remote Change | Action |
@@ -84,13 +101,14 @@ Three-way comparison: local current state, remote current state, last sync recor
 | Unchanged | Unchanged | Skip |
 | Modified | Unchanged | Upload to Drive |
 | Unchanged | Modified | Download to local |
-| Modified | Modified | Last-modified-time wins (overwrite the older) |
+| Modified | Modified | Compare `modifiedTime` (both in UTC); newer version overwrites older |
 | New (local) | Not exists | Upload to Drive |
 | Not exists | New (remote) | Download to local |
 | Deleted (local) | Unchanged | Delete from Drive |
 | Unchanged | Deleted (remote) | Delete from local |
 | Deleted (local) | Modified (remote) | Download from remote (remote wins) |
 | Modified (local) | Deleted (remote) | Upload to Drive (local wins) |
+| Deleted (local) | Deleted (remote) | Remove SyncRecord, no action needed |
 
 ### Sync Execution Order
 
@@ -102,9 +120,22 @@ Three-way comparison: local current state, remote current state, last sync recor
 
 ### Exclude Rules
 
-- Default: `.obsidian/**` (plugin configs should not sync)
+- Default: `.obsidian/**`, `.DS_Store`, `Thumbs.db` (plugin configs and OS artifacts should not sync)
 - User-configurable list of glob patterns in settings
 - Matched files/folders are ignored in both directions
+- Symlinks are not followed; they are skipped during sync
+
+### Rename Handling
+
+Renames are not explicitly detected. A rename appears as a delete + create, which results in deleting the old file from Drive and uploading the new file. This is acceptable for the initial version — Drive file history is lost for renames, but data integrity is preserved.
+
+### Folder Deletion
+
+When all files in a folder are deleted (by the per-file diff), the folder becomes empty. Empty folders are cleaned up bottom-up in step 5 of the execution order. Folder-level diffs are not tracked separately; folder existence is derived from file presence.
+
+### Multi-Device Usage
+
+Multiple devices can sync to the same Google Drive folder. Each device maintains its own local `SyncState`. Since conflicts are resolved by last-modified-time-wins (UTC), concurrent edits from different devices are handled the same as any other conflict. There is no distributed locking — the sync is eventually consistent.
 
 ## Settings
 
@@ -119,7 +150,8 @@ interface GoogleDriveSyncSettings {
   tokenExpiry: number;        // Token expiry timestamp (ms)
   syncInterval: number;       // Sync interval in minutes (default: 5, range: 1-60)
   driveFolderName: string;    // Root folder name on Drive (default: "Obsidian-Vault")
-  excludePatterns: string[];  // Glob patterns to exclude (default: [".obsidian/**"])
+  excludePatterns: string[];  // Glob patterns to exclude (default: [".obsidian/**", ".DS_Store", "Thumbs.db"])
+  stateVersion: number;       // Schema version for SyncState migration
 }
 ```
 
@@ -159,10 +191,13 @@ interface GoogleDriveSyncSettings {
 - **Single file failure**: Log error, continue syncing remaining files, report failures in summary
 - **Rate limiting**: Respect Google API rate limits; back off and retry with exponential delay
 - **Large files**: Google Drive API supports resumable uploads; use for files > 5MB
+- **Rate limiting strategy**: Batch API requests where possible. Limit concurrent requests to 5. Use exponential backoff (starting at 1s, max 60s) on 403/429 responses.
 
 ## Technical Constraints
 
 - **Obsidian API**: Use `vault.adapter` for file system operations (read, write, list, stat, delete)
-- **No Node.js fs**: Obsidian plugins should use the vault adapter, not direct fs access (for mobile compat, though this plugin may be desktop-only due to localhost OAuth)
+- **HTTP server for OAuth**: Uses Node `http` module available in Obsidian's Electron renderer process. This is desktop-only. If Obsidian restricts Node integration in the future, a fallback approach would be manual copy-paste of the auth code from the browser redirect URL.
+- **Token storage**: Tokens are stored in plain JSON via `plugin.saveData()` (under `.obsidian/plugins/`). This is excluded from sync by the default `.obsidian/**` pattern. Users should ensure restrictive file permissions on their vault directory.
+- **State versioning**: `SyncState` includes a `stateVersion` field. On schema changes, the plugin detects outdated versions and performs a full re-sync to rebuild state.
 - **esbuild bundling**: All dependencies bundled; `obsidian` and `electron` are external
 - **Desktop only**: OAuth localhost callback requires desktop environment; set `isDesktopOnly: true` in manifest
