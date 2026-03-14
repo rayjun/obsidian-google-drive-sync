@@ -94,6 +94,29 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
 					})
 			);
 
+		// Manual auth code fallback
+		if (!isLoggedIn && this.plugin.hasPendingOAuth()) {
+			new Setting(containerEl)
+				.setName("Paste authorization code")
+				.setDesc(
+					"If the automatic redirect didn't work, paste the authorization code here"
+				)
+				.addText((text) =>
+					text.setPlaceholder("4/0Axx...").onChange(() => {})
+				)
+				.addButton((button) =>
+					button.setButtonText("Submit").onClick(async () => {
+						const input = containerEl.querySelector(
+							'input[placeholder="4/0Axx..."]'
+						) as HTMLInputElement;
+						if (input?.value) {
+							await this.plugin.handleManualAuthCode(input.value);
+							this.display();
+						}
+					})
+				);
+		}
+
 		// Sync section
 		containerEl.createEl("h3", { text: "Sync Settings" });
 

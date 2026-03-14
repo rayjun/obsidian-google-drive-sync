@@ -1,11 +1,9 @@
-import { requestUrl } from "obsidian";
-import http from "http";
-import crypto from "crypto";
+import { Platform, requestUrl } from "obsidian";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const REDIRECT_PORT = 42813;
-const REDIRECT_URI = `http://localhost:${REDIRECT_PORT}/callback`;
+const LOCALHOST_REDIRECT_URI = `http://localhost:${REDIRECT_PORT}/callback`;
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
 
 export interface TokenResponse {
@@ -15,29 +13,71 @@ export interface TokenResponse {
 	token_type: string;
 }
 
-export function getAuthUrl(clientId: string, state: string): string {
+// --- Web Crypto helpers ---
+
+function toHex(bytes: Uint8Array): string {
+	return Array.from(bytes)
+		.map((b) => b.toString(16).padStart(2, "0"))
+		.join("");
+}
+
+function toBase64Url(buffer: ArrayBuffer): string {
+	const bytes = new Uint8Array(buffer);
+	let binary = "";
+	for (const b of bytes) {
+		binary += String.fromCharCode(b);
+	}
+	return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export async function generateOAuthState(): Promise<string> {
+	const bytes = new Uint8Array(16);
+	crypto.getRandomValues(bytes);
+	return toHex(bytes);
+}
+
+export async function generateCodeVerifier(): Promise<string> {
+	const bytes = new Uint8Array(32);
+	crypto.getRandomValues(bytes);
+	return toBase64Url(bytes.buffer);
+}
+
+export async function generateCodeChallenge(verifier: string): Promise<string> {
+	const encoder = new TextEncoder();
+	const data = encoder.encode(verifier);
+	const hash = await crypto.subtle.digest("SHA-256", data);
+	return toBase64Url(hash);
+}
+
+// --- OAuth URLs ---
+
+export function getAuthUrl(clientId: string, state: string, codeChallenge: string, redirectUri?: string): string {
 	const params = new URLSearchParams({
 		client_id: clientId,
-		redirect_uri: REDIRECT_URI,
+		redirect_uri: redirectUri ?? LOCALHOST_REDIRECT_URI,
 		response_type: "code",
 		scope: SCOPES,
 		access_type: "offline",
 		prompt: "consent",
 		state,
+		code_challenge: codeChallenge,
+		code_challenge_method: "S256",
 	});
 	return `${GOOGLE_AUTH_URL}?${params.toString()}`;
 }
 
-export function generateOAuthState(): string {
-	return crypto.randomBytes(16).toString("hex");
-}
+// --- Desktop: localhost callback server ---
 
-/**
- * Start a local HTTP server, open the browser for OAuth,
- * and return the authorization code.
- * Verifies the state parameter to prevent CSRF attacks.
- */
 export function listenForAuthCode(expectedState: string): Promise<string> {
+	// Only available on desktop — mobile should use manual auth code paste
+	if (Platform.isMobile) {
+		return Promise.reject(new Error("localhost OAuth callback is not available on mobile"));
+	}
+
+	// Dynamic import — only works on desktop (Node.js)
+	// eslint-disable-next-line @typescript-eslint/no-var-requires
+	const http = require("http") as typeof import("http");
+
 	return new Promise((resolve, reject) => {
 		let settled = false;
 
@@ -93,10 +133,10 @@ export function listenForAuthCode(expectedState: string): Promise<string> {
 		});
 
 		server.listen(REDIRECT_PORT, "127.0.0.1", () => {
-			// Server ready, bound to localhost only
+			// Server ready
 		});
 
-		server.on("error", (err) => {
+		server.on("error", (err: Error) => {
 			settle(() =>
 				reject(
 					new Error(
@@ -106,7 +146,6 @@ export function listenForAuthCode(expectedState: string): Promise<string> {
 			);
 		});
 
-		// Timeout after 5 minutes
 		const timeoutId = setTimeout(() => {
 			server.close();
 			settle(() => reject(new Error("OAuth authorization timed out")));
@@ -114,9 +153,8 @@ export function listenForAuthCode(expectedState: string): Promise<string> {
 	});
 }
 
-/**
- * Validate a token response from Google and throw on errors.
- */
+// --- Token exchange ---
+
 function validateTokenResponse(json: Record<string, unknown>): TokenResponse {
 	if (json.error) {
 		throw new Error(
@@ -126,13 +164,12 @@ function validateTokenResponse(json: Record<string, unknown>): TokenResponse {
 	return json as unknown as TokenResponse;
 }
 
-/**
- * Exchange an authorization code for tokens.
- */
 export async function exchangeCodeForTokens(
 	code: string,
 	clientId: string,
-	clientSecret: string
+	clientSecret: string,
+	codeVerifier: string,
+	redirectUri?: string
 ): Promise<TokenResponse> {
 	const response = await requestUrl({
 		url: GOOGLE_TOKEN_URL,
@@ -142,16 +179,14 @@ export async function exchangeCodeForTokens(
 			code,
 			client_id: clientId,
 			client_secret: clientSecret,
-			redirect_uri: REDIRECT_URI,
+			redirect_uri: redirectUri ?? LOCALHOST_REDIRECT_URI,
 			grant_type: "authorization_code",
+			code_verifier: codeVerifier,
 		}).toString(),
 	});
 	return validateTokenResponse(response.json);
 }
 
-/**
- * Refresh an expired access token.
- */
 export async function refreshAccessToken(
 	refreshToken: string,
 	clientId: string,

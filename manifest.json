@@ -5,5 +5,5 @@
 	"minAppVersion": "0.15.0",
 	"description": "Bidirectional sync between your Obsidian vault and Google Drive.",
 	"author": "rayjun",
-	"isDesktopOnly": true
+	"isDesktopOnly": false
 }

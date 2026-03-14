@@ -1,4 +1,4 @@
-import { Notice, Plugin } from "obsidian";
+import { Notice, Platform, Plugin } from "obsidian";
 import {
 	GoogleDriveSyncSettings,
 	DEFAULT_SETTINGS,
@@ -7,6 +7,8 @@ import {
 import {
 	getAuthUrl,
 	generateOAuthState,
+	generateCodeVerifier,
+	generateCodeChallenge,
 	listenForAuthCode,
 	exchangeCodeForTokens,
 	refreshAccessToken,
@@ -19,6 +21,12 @@ import {
 	isStateOutdated,
 } from "./sync-state";
 
+interface PendingOAuth {
+	state: string;
+	codeVerifier: string;
+	expiry: number;
+}
+
 export default class GoogleDriveSyncPlugin extends Plugin {
 	settings: GoogleDriveSyncSettings = DEFAULT_SETTINGS;
 	private syncState: SyncState = createEmptySyncState();
@@ -27,10 +35,12 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 	private syncTimerId: number | null = null;
 	private statusBarEl: HTMLElement | null = null;
 	private saveMutex: Promise<void> = Promise.resolve();
+	private pendingOAuth: PendingOAuth | null = null;
 
 	async onload() {
 		await this.loadSettings();
 		await this.loadSyncState();
+		await this.loadPendingOAuth();
 
 		// Initialize Drive API with token provider
 		this.driveApi = new GoogleDriveApi(() => this.getValidAccessToken());
@@ -112,31 +122,90 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 		}
 
 		try {
-			const state = generateOAuthState();
-			const authUrl = getAuthUrl(this.settings.clientId, state);
-			const codePromise = listenForAuthCode(state);
-			window.open(authUrl);
+			const state = await generateOAuthState();
+			const codeVerifier = await generateCodeVerifier();
+			const codeChallenge = await generateCodeChallenge(codeVerifier);
 
-			new Notice("Waiting for Google authorization...");
-			const code = await codePromise;
+			this.pendingOAuth = {
+				state,
+				codeVerifier,
+				expiry: Date.now() + 5 * 60 * 1000,
+			};
+			await this.savePendingOAuth();
 
-			const tokens = await exchangeCodeForTokens(
-				code,
+			const authUrl = getAuthUrl(
 				this.settings.clientId,
-				this.settings.clientSecret
+				state,
+				codeChallenge
 			);
 
-			this.settings.accessToken = tokens.access_token;
-			this.settings.refreshToken = tokens.refresh_token ?? "";
-			this.settings.tokenExpiry = Date.now() + tokens.expires_in * 1000;
-			await this.saveSettings();
-
-			new Notice("Successfully logged in to Google Drive!");
-			this.startSyncTimer();
+			if (Platform.isMobile) {
+				// Mobile: open browser, user copies auth code back manually
+				window.open(authUrl);
+				new Notice(
+					"Please complete authorization in the browser, then paste the authorization code in plugin settings."
+				);
+			} else {
+				// Desktop: localhost callback server
+				const codePromise = listenForAuthCode(state);
+				window.open(authUrl);
+				new Notice("Waiting for Google authorization...");
+				const code = await codePromise;
+				await this.completeOAuth(code);
+			}
 		} catch (err) {
 			console.error("[Google Drive Sync] OAuth error:", err);
 			new Notice(`Login failed: ${(err as Error).message}`);
 		}
+	}
+
+	/**
+	 * Complete the OAuth flow by exchanging the authorization code for tokens.
+	 */
+	private async completeOAuth(code: string): Promise<void> {
+		const tokens = await exchangeCodeForTokens(
+			code,
+			this.settings.clientId,
+			this.settings.clientSecret,
+			this.pendingOAuth!.codeVerifier
+		);
+
+		this.settings.accessToken = tokens.access_token;
+		this.settings.refreshToken = tokens.refresh_token ?? "";
+		this.settings.tokenExpiry = Date.now() + tokens.expires_in * 1000;
+		await this.saveSettings();
+		await this.clearPendingOAuth();
+
+		new Notice("Successfully logged in to Google Drive!");
+		this.startSyncTimer();
+	}
+
+	/**
+	 * Handle manual auth code paste (mobile fallback).
+	 */
+	async handleManualAuthCode(code: string): Promise<void> {
+		if (!this.pendingOAuth) {
+			new Notice("No pending login. Please start the login flow first.");
+			return;
+		}
+
+		if (Date.now() > this.pendingOAuth.expiry) {
+			await this.clearPendingOAuth();
+			new Notice("Login timed out. Please try again.");
+			return;
+		}
+
+		try {
+			await this.completeOAuth(code);
+		} catch (err) {
+			console.error("[Google Drive Sync] Manual auth code error:", err);
+			await this.clearPendingOAuth();
+			new Notice(`Login failed: ${(err as Error).message}`);
+		}
+	}
+
+	hasPendingOAuth(): boolean {
+		return this.pendingOAuth !== null && Date.now() < this.pendingOAuth.expiry;
 	}
 
 	private async getValidAccessToken(): Promise<string> {
@@ -144,7 +213,6 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 			return this.settings.accessToken;
 		}
 
-		// Token expired or about to expire — refresh
 		if (!this.settings.refreshToken) {
 			throw new Error("No refresh token. Please log in again.");
 		}
@@ -255,9 +323,29 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 		});
 	}
 
-	/**
-	 * Serialize all save operations to prevent read-modify-write races.
-	 */
+	private async loadPendingOAuth(): Promise<void> {
+		const data = await this.loadData();
+		const pending = data?.pendingOAuth as PendingOAuth | undefined;
+		if (pending && Date.now() < pending.expiry) {
+			this.pendingOAuth = pending;
+		} else {
+			this.pendingOAuth = null;
+		}
+	}
+
+	private async savePendingOAuth(): Promise<void> {
+		return this.serializedSave(async (data) => {
+			data.pendingOAuth = this.pendingOAuth;
+		});
+	}
+
+	private async clearPendingOAuth(): Promise<void> {
+		this.pendingOAuth = null;
+		return this.serializedSave(async (data) => {
+			delete data.pendingOAuth;
+		});
+	}
+
 	private serializedSave(
 		mutate: (data: Record<string, unknown>) => Promise<void> | void
 	): Promise<void> {

@@ -1,17 +1,28 @@
 # Obsidian Google Drive Sync
 
-一个 Obsidian 插件，支持 Vault 与 Google Drive 之间的双向自动同步。
+Bidirectional sync between your Obsidian vault and Google Drive.
 
-## 功能
+[中文文档](README_CN.md)
 
-- 双向同步，支持自动和手动触发
-- 基于时间戳的三方 diff 算法，冲突时以最新修改为准
-- 支持大文件断点续传（>5MB）
-- 可配置同步间隔、排除文件等
+## Features
 
-## 安装
+- Bidirectional sync with automatic and manual triggers
+- Timestamp-based three-way diff — latest modification wins on conflict
+- Resumable uploads for large files (>5MB)
+- Configurable sync interval and exclude patterns
+- Works on both desktop and mobile
 
-### 从源码构建
+## Installation
+
+### From Community Plugins
+
+Search for "Google Drive Sync" in Obsidian Settings > Community Plugins > Browse.
+
+### Manual Install
+
+Download `manifest.json`, `main.js`, `styles.css` from the [Releases](https://github.com/rayjun/obsidian-google-drive-sync/releases) page, and place them in `.obsidian/plugins/google-drive-sync/` inside your vault.
+
+### Build from Source
 
 ```bash
 git clone https://github.com/rayjun/obsidian-google-drive-sync.git
@@ -20,25 +31,28 @@ npm install
 npm run build
 ```
 
-将 `manifest.json`、`main.js`、`styles.css` 复制到 Vault 的 `.obsidian/plugins/google-drive-sync/` 目录下，重启 Obsidian 并启用插件。
+Copy `manifest.json`, `main.js`, `styles.css` to `.obsidian/plugins/google-drive-sync/` in your vault.
 
-### 手动安装
+### Mobile
 
-从 Release 页面下载 `manifest.json`、`main.js`、`styles.css`，放入 `.obsidian/plugins/google-drive-sync/` 目录。
+1. Install the plugin files on desktop first (via any method above)
+2. Sync the vault to your phone via iCloud, Syncthing, or another method
+3. Open the vault in Obsidian mobile, enable the plugin in Settings > Community Plugins
 
-## 使用前准备
+## Prerequisites
 
-1. 在 [Google Cloud Console](https://console.cloud.google.com/apis/credentials) 创建 OAuth 2.0 客户端（桌面应用类型）
-2. 启用 Google Drive API
-3. 在授权重定向 URI 中添加 `http://localhost:42813/callback`
+1. Create an OAuth 2.0 client in [Google Cloud Console](https://console.cloud.google.com/apis/credentials) (choose **Desktop app** type)
+2. Enable the Google Drive API
 
-## 配置
+## Configuration
 
-1. 打开 Obsidian 设置 > Google Drive Sync
-2. 填入 Client ID 和 Client Secret
-3. 点击「Login to Google Drive」完成授权
-4. 授权成功后自动开始同步
+1. Open Obsidian Settings > Google Drive Sync
+2. Enter your Client ID and Client Secret
+3. Click "Login to Google Drive" to authorize
+4. Sync starts automatically after login
 
-## 开源协议
+> On desktop, authorization completes automatically. On mobile, copy the authorization code from the browser and paste it in the plugin settings.
+
+## License
 
 [MIT](LICENSE)
