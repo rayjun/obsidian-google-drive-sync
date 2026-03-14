@@ -12,9 +12,14 @@
 
 ## 安装
 
-### 从社区插件安装
+### 脚本安装
 
-在 Obsidian 设置 > 第三方插件 > 浏览 中搜索 "Google Drive Sync"。
+```bash
+git clone https://github.com/rayjun/obsidian-google-drive-sync.git
+cd obsidian-google-drive-sync
+./install.sh              # 仅构建
+./install.sh /path/to/vault  # 构建并安装到 Vault
+```
 
 ### 手动安装
 
@@ -31,11 +36,19 @@ npm run build
 
 将 `manifest.json`、`main.js`、`styles.css` 复制到 Vault 的 `.obsidian/plugins/google-drive-sync/` 目录下。
 
-### 移动端安装
+### 移动端安装（iOS）
 
-1. 在电脑上安装插件（通过以上任意方式）
-2. 通过 iCloud、Syncthing 或其他方式将 Vault 同步到手机
-3. 在手机上打开 Obsidian，进入设置 > 第三方插件 > 启用 Google Drive Sync
+1. 先在电脑上安装插件（通过以上任意方式），确保插件文件在 Vault 的 `.obsidian/plugins/google-drive-sync/` 目录下
+2. 在 Mac 上将 Vault 移到 Obsidian 的 iCloud 目录：
+   ```bash
+   mv /path/to/your/vault ~/Library/Mobile\ Documents/iCloud~md~obsidian/Documents/
+   ```
+   > 如果该目录不存在，先在 iPhone 上打开 Obsidian 并创建一个开启「Store in iCloud」的 Vault，Mac 上就会自动生成该目录
+3. 等待 iCloud 同步完成（根据 Vault 大小可能需要几分钟）
+4. 在 iPhone 上打开 Obsidian，Vault 会自动出现
+5. 进入设置 > 第三方插件 > 关闭安全模式 > 启用 Google Drive Sync
+6. 填入 Client ID 和 Client Secret，点击「Login to Google Drive」
+7. 在浏览器中完成授权，复制授权码，回到插件设置粘贴提交
 
 ## 使用前准备
 

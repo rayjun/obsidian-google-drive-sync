@@ -14,9 +14,14 @@ Bidirectional sync between your Obsidian vault and Google Drive.
 
 ## Installation
 
-### From Community Plugins
+### Install Script
 
-Search for "Google Drive Sync" in Obsidian Settings > Community Plugins > Browse.
+```bash
+git clone https://github.com/rayjun/obsidian-google-drive-sync.git
+cd obsidian-google-drive-sync
+./install.sh              # Build only
+./install.sh /path/to/vault  # Build and install to vault
+```
 
 ### Manual Install
 
@@ -33,11 +38,19 @@ npm run build
 
 Copy `manifest.json`, `main.js`, `styles.css` to `.obsidian/plugins/google-drive-sync/` in your vault.
 
-### Mobile
+### Mobile (iOS)
 
-1. Install the plugin files on desktop first (via any method above)
-2. Sync the vault to your phone via iCloud, Syncthing, or another method
-3. Open the vault in Obsidian mobile, enable the plugin in Settings > Community Plugins
+1. Install the plugin on desktop first (via any method above), making sure the plugin files are inside the vault's `.obsidian/plugins/google-drive-sync/` directory
+2. Move the vault to the Obsidian iCloud directory on your Mac:
+   ```bash
+   mv /path/to/your/vault ~/Library/Mobile\ Documents/iCloud~md~obsidian/Documents/
+   ```
+   > If this directory does not exist, open Obsidian on your iPhone first and create a new vault with "Store in iCloud" enabled. This will create the directory on your Mac.
+3. Wait for iCloud to sync (may take a few minutes depending on vault size)
+4. Open Obsidian on your iPhone — the vault should appear automatically
+5. Go to Settings > Community Plugins > disable Restricted Mode > enable Google Drive Sync
+6. Enter Client ID and Client Secret, tap "Login to Google Drive"
+7. Complete authorization in the browser, copy the authorization code, go back to plugin settings and paste it
 
 ## Prerequisites
 
