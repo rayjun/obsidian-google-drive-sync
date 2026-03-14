@@ -1,0 +1,23 @@
+{
+	"name": "obsidian-google-drive-sync",
+	"version": "0.1.0",
+	"description": "Obsidian plugin for bidirectional Google Drive sync",
+	"main": "main.js",
+	"type": "module",
+	"scripts": {
+		"dev": "node esbuild.config.mjs",
+		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"test": "vitest run",
+		"test:watch": "vitest"
+	},
+	"keywords": [],
+	"license": "MIT",
+	"devDependencies": {
+		"@types/node": "^22.0.0",
+		"esbuild": "0.25.5",
+		"obsidian": "latest",
+		"tslib": "2.4.0",
+		"typescript": "^5.8.3",
+		"vitest": "^3.0.0"
+	}
+}
