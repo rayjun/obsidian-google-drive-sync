@@ -298,7 +298,7 @@ export class SyncEngine {
 								localPath: action.path,
 								driveFileId: driveFile.id,
 								driveFolderId: parentFolderId,
-								lastSyncedTime: Date.now(),
+								lastSyncedTime: new Date(driveFile.modifiedTime).getTime(),
 							});
 							stats.uploaded++;
 							break;
@@ -322,11 +322,15 @@ export class SyncEngine {
 								content
 							);
 
+							// Use the actual file mtime after writing to avoid clock skew
+							const fileStat = await this.vault.adapter.stat(action.path);
+							const localMtime = fileStat?.mtime ?? Date.now();
+
 							state = upsertRecord(state, {
 								localPath: action.path,
 								driveFileId: action.driveFileId!,
 								driveFolderId: action.driveFolderId!,
-								lastSyncedTime: Date.now(),
+								lastSyncedTime: localMtime,
 							});
 							stats.downloaded++;
 							break;

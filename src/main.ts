@@ -25,6 +25,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 	private driveApi!: GoogleDriveApi;
 	private syncTimerId: number | null = null;
 	private statusBarEl: HTMLElement | null = null;
+	private saveMutex: Promise<void> = Promise.resolve();
 
 	async onload() {
 		await this.loadSettings();
@@ -231,9 +232,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 	}
 
 	async saveSettings(): Promise<void> {
-		const data = (await this.loadData()) ?? {};
-		data.settings = this.settings;
-		await this.saveData(data);
+		return this.serializedSave(async (data) => {
+			data.settings = this.settings;
+		});
 	}
 
 	private async loadSyncState(): Promise<void> {
@@ -247,8 +248,22 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 	}
 
 	private async saveSyncState(): Promise<void> {
-		const data = (await this.loadData()) ?? {};
-		data.syncState = this.syncState;
-		await this.saveData(data);
+		return this.serializedSave(async (data) => {
+			data.syncState = this.syncState;
+		});
+	}
+
+	/**
+	 * Serialize all save operations to prevent read-modify-write races.
+	 */
+	private serializedSave(
+		mutate: (data: Record<string, unknown>) => Promise<void> | void
+	): Promise<void> {
+		this.saveMutex = this.saveMutex.then(async () => {
+			const data = (await this.loadData()) ?? {};
+			await mutate(data);
+			await this.saveData(data);
+		});
+		return this.saveMutex;
 	}
 }

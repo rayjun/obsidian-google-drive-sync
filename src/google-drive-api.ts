@@ -93,9 +93,10 @@ export class GoogleDriveApi {
 	): Promise<string> {
 		return withRetry(() =>
 			throttledRequest(async () => {
+				const safeName = folderName.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 				const q = parentId
-					? `name='${folderName}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
-					: `name='${folderName}' and 'root' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+					? `name='${safeName}' and '${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`
+					: `name='${safeName}' and 'root' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`;
 
 				const headers = await this.authHeaders();
 				const listResp = await requestUrl({
