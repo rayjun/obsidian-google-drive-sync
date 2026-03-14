@@ -1,4 +1,5 @@
 import { defineConfig } from "vitest/config";
+import { resolve } from "path";
 
 export default defineConfig({
 	test: {
@@ -6,7 +7,7 @@ export default defineConfig({
 	},
 	resolve: {
 		alias: {
-			obsidian: "./tests/__mocks__/obsidian.ts",
+			obsidian: resolve(__dirname, "tests/__mocks__/obsidian.ts"),
 		},
 	},
 });
