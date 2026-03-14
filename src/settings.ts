@@ -1,0 +1,138 @@
+import { App, PluginSettingTab, Setting } from "obsidian";
+import type GoogleDriveSyncPlugin from "./main";
+
+export interface GoogleDriveSyncSettings {
+	clientId: string;
+	clientSecret: string;
+	accessToken: string;
+	refreshToken: string;
+	tokenExpiry: number;
+	syncInterval: number;
+	driveFolderName: string;
+	excludePatterns: string[];
+	stateVersion: number;
+}
+
+export const DEFAULT_SETTINGS: GoogleDriveSyncSettings = {
+	clientId: "",
+	clientSecret: "",
+	accessToken: "",
+	refreshToken: "",
+	tokenExpiry: 0,
+	syncInterval: 5,
+	driveFolderName: "Obsidian-Vault",
+	excludePatterns: [".obsidian/**", ".DS_Store", "Thumbs.db"],
+	stateVersion: 1,
+};
+
+export class GoogleDriveSyncSettingTab extends PluginSettingTab {
+	plugin: GoogleDriveSyncPlugin;
+
+	constructor(app: App, plugin: GoogleDriveSyncPlugin) {
+		super(app, plugin);
+		this.plugin = plugin;
+	}
+
+	display(): void {
+		const { containerEl } = this;
+		containerEl.empty();
+
+		containerEl.createEl("h2", { text: "Google Drive Sync Settings" });
+
+		// Google Account section
+		containerEl.createEl("h3", { text: "Google Account" });
+
+		new Setting(containerEl)
+			.setName("Client ID")
+			.setDesc("OAuth 2.0 Client ID from Google Cloud Console")
+			.addText((text) =>
+				text
+					.setPlaceholder("Enter Client ID")
+					.setValue(this.plugin.settings.clientId)
+					.onChange(async (value) => {
+						this.plugin.settings.clientId = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Client Secret")
+			.setDesc("OAuth 2.0 Client Secret from Google Cloud Console")
+			.addText((text) =>
+				text
+					.setPlaceholder("Enter Client Secret")
+					.setValue(this.plugin.settings.clientSecret)
+					.onChange(async (value) => {
+						this.plugin.settings.clientSecret = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		const isLoggedIn = !!this.plugin.settings.refreshToken;
+		new Setting(containerEl)
+			.setName("Authentication")
+			.setDesc(isLoggedIn ? "Logged in to Google Drive" : "Not logged in")
+			.addButton((button) =>
+				button
+					.setButtonText(isLoggedIn ? "Logout" : "Login to Google Drive")
+					.onClick(async () => {
+						if (isLoggedIn) {
+							this.plugin.settings.accessToken = "";
+							this.plugin.settings.refreshToken = "";
+							this.plugin.settings.tokenExpiry = 0;
+							await this.plugin.saveSettings();
+						} else {
+							await this.plugin.startOAuthFlow();
+						}
+						this.display();
+					})
+			);
+
+		// Sync section
+		containerEl.createEl("h3", { text: "Sync Settings" });
+
+		new Setting(containerEl)
+			.setName("Sync interval")
+			.setDesc("How often to sync (in minutes)")
+			.addSlider((slider) =>
+				slider
+					.setLimits(1, 60, 1)
+					.setValue(this.plugin.settings.syncInterval)
+					.setDynamicTooltip()
+					.onChange(async (value) => {
+						this.plugin.settings.syncInterval = value;
+						await this.plugin.saveSettings();
+						this.plugin.resetSyncTimer();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Drive folder name")
+			.setDesc("Root folder name on Google Drive")
+			.addText((text) =>
+				text
+					.setPlaceholder("Obsidian-Vault")
+					.setValue(this.plugin.settings.driveFolderName)
+					.onChange(async (value) => {
+						this.plugin.settings.driveFolderName = value;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Exclude patterns")
+			.setDesc("Glob patterns to exclude (one per line)")
+			.addTextArea((text) =>
+				text
+					.setPlaceholder(".obsidian/**\n.DS_Store")
+					.setValue(this.plugin.settings.excludePatterns.join("\n"))
+					.onChange(async (value) => {
+						this.plugin.settings.excludePatterns = value
+							.split("\n")
+							.map((s) => s.trim())
+							.filter((s) => s.length > 0);
+						await this.plugin.saveSettings();
+					})
+			);
+	}
+}
