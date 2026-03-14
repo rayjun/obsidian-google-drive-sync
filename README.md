@@ -1,28 +1,17 @@
 # Obsidian Google Drive Sync
 
-Bidirectional sync between your Obsidian vault and Google Drive. Automatically keeps your entire vault in sync at configurable intervals.
+一个 Obsidian 插件，支持 Vault 与 Google Drive 之间的双向自动同步。
 
-## Features
+## 功能
 
-- **Bidirectional sync** — changes on either side are synced to the other
-- **Automatic sync** — configurable interval (1-60 minutes, default 5)
-- **Manual sync** — ribbon icon or command palette
-- **Three-way diff** — compares local, remote, and last sync state to detect changes accurately
-- **Conflict resolution** — last-modified-time wins (UTC)
-- **Large file support** — resumable uploads for files > 5MB
-- **Rate limiting** — automatic throttling (max 5 concurrent requests) with exponential backoff
-- **Exclude patterns** — skip files/folders from sync (default: `.obsidian/**`, `.DS_Store`, `Thumbs.db`)
-- **Multi-device** — multiple devices can sync to the same Google Drive folder
+- 双向同步，支持自动和手动触发
+- 基于时间戳的三方 diff 算法，冲突时以最新修改为准
+- 支持大文件断点续传（>5MB）
+- 可配置同步间隔、排除文件等
 
-## Prerequisites
+## 安装
 
-1. A Google Cloud project with the **Google Drive API** enabled
-2. An **OAuth 2.0 Client ID** (Desktop app type) created in [Google Cloud Console](https://console.cloud.google.com/apis/credentials)
-3. Add `http://localhost:42813/callback` as an authorized redirect URI
-
-## Installation
-
-### From source
+### 从源码构建
 
 ```bash
 git clone https://github.com/rayjun/obsidian-google-drive-sync.git
@@ -31,110 +20,25 @@ npm install
 npm run build
 ```
 
-Copy `manifest.json`, `main.js`, and `styles.css` to your vault:
+将 `manifest.json`、`main.js`、`styles.css` 复制到 Vault 的 `.obsidian/plugins/google-drive-sync/` 目录下，重启 Obsidian 并启用插件。
 
-```bash
-cp manifest.json main.js styles.css /path/to/vault/.obsidian/plugins/google-drive-sync/
-```
+### 手动安装
 
-### Manual
+从 Release 页面下载 `manifest.json`、`main.js`、`styles.css`，放入 `.obsidian/plugins/google-drive-sync/` 目录。
 
-1. Download `manifest.json`, `main.js`, `styles.css` from the latest release
-2. Create folder `.obsidian/plugins/google-drive-sync/` in your vault
-3. Copy the three files into that folder
-4. Restart Obsidian and enable the plugin in Settings > Community Plugins
+## 使用前准备
 
-## Setup
+1. 在 [Google Cloud Console](https://console.cloud.google.com/apis/credentials) 创建 OAuth 2.0 客户端（桌面应用类型）
+2. 启用 Google Drive API
+3. 在授权重定向 URI 中添加 `http://localhost:42813/callback`
 
-1. Open **Settings > Google Drive Sync**
-2. Enter your **Client ID** and **Client Secret**
-3. Click **Login to Google Drive** — a browser window opens for authorization
-4. After authorizing, the plugin starts syncing automatically
+## 配置
 
-## Configuration
+1. 打开 Obsidian 设置 > Google Drive Sync
+2. 填入 Client ID 和 Client Secret
+3. 点击「Login to Google Drive」完成授权
+4. 授权成功后自动开始同步
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| Sync interval | 5 min | How often to auto-sync (1-60 minutes) |
-| Drive folder name | `Obsidian-Vault` | Root folder name on Google Drive |
-| Exclude patterns | `.obsidian/**`, `.DS_Store`, `Thumbs.db` | Glob patterns to exclude from sync (one per line) |
+## 开源协议
 
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `Google Drive Sync: Sync now` | Trigger a manual sync |
-| `Google Drive Sync: Login to Google Drive` | Start OAuth authorization |
-| `Google Drive Sync: Logout` | Clear stored tokens |
-
-## How it works
-
-### Sync algorithm
-
-The plugin uses a three-way diff algorithm comparing:
-
-1. **Local state** — current files in the vault
-2. **Remote state** — current files on Google Drive
-3. **Last sync state** — snapshot from the previous sync
-
-| Local | Remote | Action |
-|-------|--------|--------|
-| Modified | Unchanged | Upload to Drive |
-| Unchanged | Modified | Download to local |
-| Modified | Modified | Newer timestamp wins |
-| New | Not exists | Upload to Drive |
-| Not exists | New | Download to local |
-| Deleted | Unchanged | Delete from Drive |
-| Unchanged | Deleted | Delete from local |
-| Deleted | Modified | Download (remote wins) |
-| Modified | Deleted | Upload (local wins) |
-| Deleted | Deleted | Remove sync record |
-
-### Storage structure
-
-The plugin creates a root folder on Google Drive (default: `Obsidian-Vault`) and mirrors your vault's directory structure inside it.
-
-### Security
-
-- OAuth scope: `drive.file` — only accesses files created by this plugin, not your entire Drive
-- Tokens are stored locally in `.obsidian/plugins/google-drive-sync/data.json`
-- CSRF protection via OAuth `state` parameter
-- OAuth callback server binds to `127.0.0.1` only
-
-## Development
-
-```bash
-npm install          # Install dependencies
-npm run dev          # Build in watch mode
-npm run build        # Production build
-npm test             # Run tests
-npm run test:watch   # Run tests in watch mode
-```
-
-### Project structure
-
-```
-src/
-├── main.ts              # Plugin entry point
-├── settings.ts          # Settings interface and UI
-├── google-auth.ts       # OAuth 2.0 authentication
-├── google-drive-api.ts  # Google Drive API wrapper
-├── sync-engine.ts       # Sync diff algorithm and execution
-├── sync-state.ts        # Sync state management
-└── utils.ts             # Shared utilities
-tests/
-├── utils.test.ts        # 16 tests
-├── sync-state.test.ts   # 9 tests
-└── sync-engine.test.ts  # 20 tests
-```
-
-## Limitations
-
-- **Desktop only** — OAuth localhost callback requires a desktop environment
-- **Exclude patterns** — supports `dir/**` recursive match and basename match (e.g., `.DS_Store`), but not full glob wildcards like `*.tmp`
-- **Rename detection** — renames appear as delete + create (data is preserved, but Drive file history is lost)
-- **No distributed locking** — multi-device sync is eventually consistent
-
-## License
-
-MIT
+[MIT](LICENSE)
