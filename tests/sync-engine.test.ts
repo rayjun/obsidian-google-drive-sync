@@ -549,4 +549,145 @@ describe("SyncEngine", () => {
 		expect(savedState).not.toBeNull();
 		expect(savedState!.lastSyncTimestamp).toBeGreaterThanOrEqual(beforeSync);
 	});
+
+	it("uploads files in nested subdirectories and creates folder hierarchy", async () => {
+		const vault = createMockVault([
+			{ path: "a/b/c/deep.md", mtime: 1000, content: new ArrayBuffer(5) },
+		]);
+		const driveApi = createMockDriveApi();
+		// Return unique folder IDs for each folder creation
+		let folderCallCount = 0;
+		driveApi.findOrCreateFolder = vi.fn(async (name: string) => {
+			folderCallCount++;
+			return `folder-${name}-${folderCallCount}`;
+		});
+
+		let savedState: SyncState | null = null;
+		const engine = new SyncEngine(
+			vault,
+			driveApi,
+			() => ({ driveFolderName: "Vault", excludePatterns: [] }),
+			() => createEmptySyncState(),
+			async (s) => { savedState = s; }
+		);
+
+		const stats = await engine.sync();
+
+		expect(stats.uploaded).toBe(1);
+		// Root folder + 3 subdirectories (a, b, c) = 4 findOrCreateFolder calls
+		expect(driveApi.findOrCreateFolder).toHaveBeenCalledTimes(4);
+		// Verify folder IDs were saved
+		expect(savedState!.driveFolderIds["a"]).toBeDefined();
+		expect(savedState!.driveFolderIds["a/b"]).toBeDefined();
+		expect(savedState!.driveFolderIds["a/b/c"]).toBeDefined();
+		// Verify file was uploaded to the correct parent folder (a/b/c), not root
+		expect(driveApi.uploadFile).toHaveBeenCalledWith(
+			expect.anything(),       // content
+			"deep.md",               // fileName
+			savedState!.driveFolderIds["a/b/c"],  // parentFolderId — must be folder c, not root
+			undefined                // driveFileId (new file)
+		);
+		// Verify the sync record has correct folder
+		expect(savedState!.records["a/b/c/deep.md"]).toBeDefined();
+		expect(savedState!.records["a/b/c/deep.md"].driveFolderId).toBe(
+			savedState!.driveFolderIds["a/b/c"]
+		);
+	});
+
+	it("downloads files into nested subdirectories and creates all intermediate dirs", async () => {
+		const vault = createMockVault();
+		// Mock exists to return false for all directories
+		vault.adapter.exists = vi.fn(async () => false);
+		vault.adapter.stat = vi.fn(async () => ({ mtime: 5000, ctime: 5000, size: 10 }));
+
+		const driveApi = createMockDriveApi([
+			{ relativePath: "x/y/z/file.md", id: "d1", modifiedTime: new Date(2000).toISOString() },
+		]);
+
+		const engine = new SyncEngine(
+			vault,
+			driveApi,
+			() => ({ driveFolderName: "Vault", excludePatterns: [] }),
+			() => createEmptySyncState(),
+			vi.fn(async () => {})
+		);
+
+		const stats = await engine.sync();
+
+		expect(stats.downloaded).toBe(1);
+		// Should create x, x/y, x/y/z — 3 mkdir calls
+		expect(vault.adapter.mkdir).toHaveBeenCalledWith("x");
+		expect(vault.adapter.mkdir).toHaveBeenCalledWith("x/y");
+		expect(vault.adapter.mkdir).toHaveBeenCalledWith("x/y/z");
+	});
+
+	it("handles computeDiff correctly for files in subdirectories", () => {
+		const localFiles: LocalFile[] = [
+			{ path: "docs/notes/a.md", mtime: 2000 },
+			{ path: "docs/notes/b.md", mtime: 1000 },
+		];
+		const remoteFiles: RemoteFile[] = [
+			{ path: "docs/notes/a.md", driveFileId: "d1", driveFolderId: "f1", modifiedTime: 1000 },
+			{ path: "docs/notes/b.md", driveFileId: "d2", driveFolderId: "f1", modifiedTime: 2000 },
+		];
+		const records: Record<string, SyncRecord> = {
+			"docs/notes/a.md": { localPath: "docs/notes/a.md", driveFileId: "d1", driveFolderId: "f1", lastSyncedTime: 1000 },
+			"docs/notes/b.md": { localPath: "docs/notes/b.md", driveFileId: "d2", driveFolderId: "f1", lastSyncedTime: 1000 },
+		};
+		const actions = computeDiff(localFiles, remoteFiles, records);
+
+		expect(actions).toHaveLength(2);
+		expect(actions).toContainEqual({
+			type: "upload",
+			path: "docs/notes/a.md",
+			driveFileId: "d1",
+			driveFolderId: "f1",
+		});
+		expect(actions).toContainEqual({
+			type: "download",
+			path: "docs/notes/b.md",
+			driveFileId: "d2",
+			driveFolderId: "f1",
+			remoteModifiedTime: 2000,
+		});
+	});
+
+	it("syncs mix of root and nested files correctly", async () => {
+		const vault = createMockVault([
+			{ path: "root.md", mtime: 1000, content: new ArrayBuffer(3) },
+			{ path: "notes/daily/2024-01-01.md", mtime: 1000, content: new ArrayBuffer(5) },
+			{ path: "notes/daily/2024-01-02.md", mtime: 1000, content: new ArrayBuffer(5) },
+			{ path: "attachments/img/photo.png", mtime: 1000, content: new ArrayBuffer(8) },
+		]);
+		const driveApi = createMockDriveApi();
+		const folderMap: Record<string, string> = {};
+		driveApi.findOrCreateFolder = vi.fn(async (name: string, parentId?: string) => {
+			const key = parentId ? `${parentId}/${name}` : name;
+			folderMap[key] = `id-${name}`;
+			return `id-${name}`;
+		});
+
+		let savedState: SyncState | null = null;
+		const engine = new SyncEngine(
+			vault,
+			driveApi,
+			() => ({ driveFolderName: "Vault", excludePatterns: [] }),
+			() => createEmptySyncState(),
+			async (s) => { savedState = s; }
+		);
+
+		const stats = await engine.sync();
+
+		expect(stats.uploaded).toBe(4);
+		expect(stats.errors).toBe(0);
+		// All 4 files should have sync records
+		expect(Object.keys(savedState!.records)).toHaveLength(4);
+		expect(savedState!.records["root.md"]).toBeDefined();
+		expect(savedState!.records["notes/daily/2024-01-01.md"]).toBeDefined();
+		expect(savedState!.records["notes/daily/2024-01-02.md"]).toBeDefined();
+		expect(savedState!.records["attachments/img/photo.png"]).toBeDefined();
+		// Folder structure should be created:
+		// root folder + notes + notes/daily + attachments + attachments/img = 5 calls
+		expect(driveApi.findOrCreateFolder).toHaveBeenCalledTimes(5);
+	});
 });

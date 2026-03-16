@@ -314,13 +314,18 @@ export class SyncEngine {
 							const content = await this.driveApi.downloadFile(
 								action.driveFileId!
 							);
-							// Ensure parent directory exists locally
+							// Ensure full directory hierarchy exists locally
 							const parentPath = getParentPath(action.path);
 							if (parentPath) {
-								const exists =
-									await this.vault.adapter.exists(parentPath);
-								if (!exists) {
-									await this.vault.adapter.mkdir(parentPath);
+								const parts = parentPath.split("/");
+								let current = "";
+								for (const part of parts) {
+									current = current ? `${current}/${part}` : part;
+									const exists =
+										await this.vault.adapter.exists(current);
+									if (!exists) {
+										await this.vault.adapter.mkdir(current);
+									}
 								}
 							}
 							await this.vault.adapter.writeBinary(
@@ -396,14 +401,27 @@ export class SyncEngine {
 					const hasFiles = Object.values(state.records).some(
 						(r) => getParentPath(r.localPath) === folderPath
 					);
-					if (!hasFiles && state.driveFolderIds[folderPath]) {
+					if (!hasFiles) {
+						// Clean up remote folder
+						if (state.driveFolderIds[folderPath]) {
+							try {
+								await this.driveApi.deleteFile(
+									state.driveFolderIds[folderPath]!
+								);
+								delete state.driveFolderIds[folderPath];
+							} catch {
+								// Folder may not be empty on Drive — ignore
+							}
+						}
+						// Clean up local empty folder
 						try {
-							await this.driveApi.deleteFile(
-								state.driveFolderIds[folderPath]!
-							);
-							delete state.driveFolderIds[folderPath];
+							const localExists =
+								await this.vault.adapter.exists(folderPath);
+							if (localExists) {
+								await this.vault.adapter.rmdir(folderPath, false);
+							}
 						} catch {
-							// Folder may not be empty on Drive — ignore
+							// Folder may not be empty locally — ignore
 						}
 					}
 				}
