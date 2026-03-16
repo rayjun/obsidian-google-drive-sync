@@ -195,8 +195,33 @@ export class GoogleDriveApi {
 	}
 
 	/**
+	 * Find an existing file by name in a specific folder.
+	 * Returns the file ID if found, undefined otherwise.
+	 */
+	private async findExistingFile(
+		fileName: string,
+		parentFolderId: string
+	): Promise<string | undefined> {
+		return withRetry(() =>
+			throttledRequest(async () => {
+				const safeName = fileName.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+				const q = `name='${safeName}' and '${parentFolderId}' in parents and mimeType!='application/vnd.google-apps.folder' and trashed=false`;
+				const headers = await this.authHeaders();
+				const resp = await requestUrl({
+					url: `${DRIVE_API_BASE}/files?q=${encodeURIComponent(q)}&fields=files(id)&pageSize=1`,
+					headers,
+				});
+				const data = resp.json as DriveListResponse;
+				return data.files.length > 0 ? data.files[0]!.id : undefined;
+			})
+		);
+	}
+
+	/**
 	 * Upload a file (create or update).
 	 * Uses resumable upload for files > 5MB, simple upload otherwise.
+	 * If no existingFileId is given, checks for an existing file with the same
+	 * name in the parent folder to avoid creating duplicates.
 	 */
 	async uploadFile(
 		content: ArrayBuffer,
@@ -204,6 +229,12 @@ export class GoogleDriveApi {
 		parentFolderId: string,
 		existingFileId?: string
 	): Promise<DriveFile> {
+		// If no existing file ID, check if a file with the same name already exists
+		// in the parent folder to prevent duplicates
+		if (!existingFileId) {
+			existingFileId = await this.findExistingFile(fileName, parentFolderId);
+		}
+
 		const RESUMABLE_THRESHOLD = 5 * 1024 * 1024; // 5MB
 
 		if (content.byteLength > RESUMABLE_THRESHOLD) {
@@ -358,5 +389,50 @@ export class GoogleDriveApi {
 				});
 			})
 		);
+	}
+
+	/**
+	 * Find and remove duplicate files in the sync folder tree.
+	 * For each group of files with the same relative path, keeps the newest
+	 * one (by modifiedTime) and deletes the rest.
+	 * Returns the number of duplicates deleted.
+	 */
+	async deduplicateFiles(rootFolderId: string): Promise<number> {
+		const entries = await this.listAllFilesRecursive(rootFolderId);
+
+		// Group by relative path
+		const pathGroups = new Map<string, { file: DriveFile; relativePath: string }[]>();
+		for (const entry of entries) {
+			const group = pathGroups.get(entry.relativePath) ?? [];
+			group.push(entry);
+			pathGroups.set(entry.relativePath, group);
+		}
+
+		let deletedCount = 0;
+		for (const [, group] of pathGroups) {
+			if (group.length <= 1) continue;
+
+			// Sort by modifiedTime descending — keep the newest
+			group.sort(
+				(a, b) =>
+					new Date(b.file.modifiedTime).getTime() -
+					new Date(a.file.modifiedTime).getTime()
+			);
+
+			// Delete all but the first (newest)
+			for (let i = 1; i < group.length; i++) {
+				try {
+					await this.deleteFile(group[i]!.file.id);
+					deletedCount++;
+				} catch (err) {
+					console.error(
+						`[Google Drive Sync] Failed to delete duplicate ${group[i]!.relativePath} (${group[i]!.file.id}):`,
+						err
+					);
+				}
+			}
+		}
+
+		return deletedCount;
 	}
 }

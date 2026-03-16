@@ -99,6 +99,14 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: "deduplicate",
+			name: "Remove duplicate files from Google Drive",
+			callback: async () => {
+				await this.runDeduplicate();
+			},
+		});
+
 		// Settings tab
 		this.addSettingTab(new GoogleDriveSyncSettingTab(this.app, this));
 
@@ -263,6 +271,30 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 			new Notice(`Google Drive sync failed: ${(err as Error).message}`);
 			this.updateStatusBar("Error");
 			this.setRibbonIcon("cloud-off");
+		}
+	}
+
+	private async runDeduplicate(): Promise<void> {
+		if (!this.settings.refreshToken) {
+			new Notice("Please log in to Google Drive first.");
+			return;
+		}
+
+		new Notice("Scanning for duplicate files on Google Drive...");
+
+		try {
+			const rootFolderId = await this.driveApi.findOrCreateFolder(
+				this.settings.driveFolderName
+			);
+			const deleted = await this.driveApi.deduplicateFiles(rootFolderId);
+			if (deleted > 0) {
+				new Notice(`Removed ${deleted} duplicate file(s) from Google Drive.`);
+			} else {
+				new Notice("No duplicate files found on Google Drive.");
+			}
+		} catch (err) {
+			console.error("[Google Drive Sync] Deduplicate error:", err);
+			new Notice(`Deduplicate failed: ${(err as Error).message}`);
 		}
 	}
 
