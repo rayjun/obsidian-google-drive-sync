@@ -300,11 +300,18 @@ export class SyncEngine {
 								action.driveFileId
 							);
 
+							// Use the greater of local mtime and remote modifiedTime
+							// to prevent clock skew from causing duplicate uploads
+							const fileStat = await this.vault.adapter.stat(action.path);
+							const localMtime = fileStat?.mtime ?? Date.now();
+							const remoteMtime = new Date(driveFile.modifiedTime).getTime();
+							const syncTime = Math.max(localMtime, remoteMtime);
+
 							state = upsertRecord(state, {
 								localPath: action.path,
 								driveFileId: driveFile.id,
 								driveFolderId: parentFolderId,
-								lastSyncedTime: new Date(driveFile.modifiedTime).getTime(),
+								lastSyncedTime: syncTime,
 							});
 							stats.uploaded++;
 							break;

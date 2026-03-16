@@ -433,6 +433,56 @@ describe("SyncEngine", () => {
 		expect(savedState!.records["hello.md"]).toBeDefined();
 	});
 
+	it("does not re-upload files on second sync (no clock skew duplication)", async () => {
+		// Simulate: local mtime=5000, but Drive returns modifiedTime in the past (3000)
+		const vault = createMockVault([
+			{ path: "note.md", mtime: 5000, content: new ArrayBuffer(5) },
+		]);
+		const driveModifiedTime = new Date(3000).toISOString();
+		const driveApi = createMockDriveApi();
+		driveApi.uploadFile = vi.fn(async () => ({
+			id: "drive-1",
+			name: "note.md",
+			mimeType: "text/plain",
+			modifiedTime: driveModifiedTime, // Drive time is earlier than local mtime
+		}));
+
+		let savedState: SyncState = createEmptySyncState();
+		const engine = new SyncEngine(
+			vault,
+			driveApi,
+			() => ({ driveFolderName: "Vault", excludePatterns: [] }),
+			() => savedState,
+			async (s) => { savedState = s; }
+		);
+
+		// First sync — should upload the file
+		const stats1 = await engine.sync();
+		expect(stats1.uploaded).toBe(1);
+
+		// Second sync — same local file, now record exists, should NOT re-upload
+		// Update driveApi to return the file as remote
+		driveApi.listAllFilesRecursive = vi.fn(async (_rootId: string, folderIds?: Record<string, string>) => {
+			if (folderIds) folderIds[""] = "root-folder-id";
+			return [{
+				file: {
+					id: "drive-1",
+					name: "note.md",
+					mimeType: "text/plain",
+					modifiedTime: driveModifiedTime,
+					parents: ["root-folder-id"],
+				},
+				relativePath: "note.md",
+			}];
+		});
+		driveApi.uploadFile.mockClear();
+
+		const stats2 = await engine.sync();
+		expect(stats2.uploaded).toBe(0);
+		expect(stats2.downloaded).toBe(0);
+		expect(driveApi.uploadFile).not.toHaveBeenCalled();
+	});
+
 	it("downloads new remote files to local", async () => {
 		const vault = createMockVault();
 		const driveApi = createMockDriveApi([
