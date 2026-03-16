@@ -1,4 +1,4 @@
-import { Notice, Platform, Plugin } from "obsidian";
+import { Notice, Platform, Plugin, setIcon } from "obsidian";
 import {
 	GoogleDriveSyncSettings,
 	DEFAULT_SETTINGS,
@@ -34,6 +34,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 	private driveApi!: GoogleDriveApi;
 	private syncTimerId: number | null = null;
 	private statusBarEl: HTMLElement | null = null;
+	private ribbonIconEl: HTMLElement | null = null;
 	private saveMutex: Promise<void> = Promise.resolve();
 	private pendingOAuth: PendingOAuth | null = null;
 
@@ -61,7 +62,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 		);
 
 		// Ribbon icon
-		this.addRibbonIcon("cloud", "Google Drive Sync", async () => {
+		this.ribbonIconEl = this.addRibbonIcon("cloud", "Google Drive Sync", async () => {
 			await this.runSync();
 		});
 
@@ -249,16 +250,19 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 		}
 
 		this.updateStatusBar("Syncing...");
+		this.setRibbonIcon("refresh-cw");
 
 		try {
 			const stats = await this.syncEngine.sync();
 			const msg = `Google Drive sync complete (${stats.uploaded} uploaded, ${stats.downloaded} downloaded${stats.errors > 0 ? `, ${stats.errors} errors` : ""})`;
 			new Notice(msg);
 			this.updateStatusBar("Last sync: just now");
+			this.setRibbonIcon("cloud");
 		} catch (err) {
 			console.error("[Google Drive Sync] Sync error:", err);
 			new Notice(`Google Drive sync failed: ${(err as Error).message}`);
 			this.updateStatusBar("Error");
+			this.setRibbonIcon("cloud-off");
 		}
 	}
 
@@ -291,6 +295,12 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 	private updateStatusBar(status: string): void {
 		if (this.statusBarEl) {
 			this.statusBarEl.setText(`Google Drive: ${status}`);
+		}
+	}
+
+	private setRibbonIcon(iconId: string): void {
+		if (this.ribbonIconEl) {
+			setIcon(this.ribbonIconEl, iconId);
 		}
 	}
 

@@ -33,6 +33,7 @@ export interface SyncAction {
 	path: string;
 	driveFileId: string | undefined;
 	driveFolderId: string | undefined;
+	remoteModifiedTime?: number;
 }
 
 /**
@@ -80,6 +81,7 @@ export function computeDiff(
 						path,
 						driveFileId: remote.driveFileId,
 						driveFolderId: remote.driveFolderId,
+						remoteModifiedTime: remote.modifiedTime,
 					});
 				}
 			} else if (localModified) {
@@ -95,6 +97,7 @@ export function computeDiff(
 					path,
 					driveFileId: remote.driveFileId,
 					driveFolderId: remote.driveFolderId,
+					remoteModifiedTime: remote.modifiedTime,
 				});
 			}
 			// else: unchanged — skip
@@ -113,6 +116,7 @@ export function computeDiff(
 					path,
 					driveFileId: remote.driveFileId,
 					driveFolderId: remote.driveFolderId,
+					remoteModifiedTime: remote.modifiedTime,
 				});
 			}
 		} else if (local && !remote && !record) {
@@ -130,6 +134,7 @@ export function computeDiff(
 				path,
 				driveFileId: remote.driveFileId,
 				driveFolderId: remote.driveFolderId,
+				remoteModifiedTime: remote.modifiedTime,
 			});
 		} else if (local && !remote && record) {
 			// Deleted remotely
@@ -161,6 +166,7 @@ export function computeDiff(
 					path,
 					driveFileId: remote.driveFileId,
 					driveFolderId: remote.driveFolderId,
+					remoteModifiedTime: remote.modifiedTime,
 				});
 			} else {
 				// Not modified remotely — delete remote
@@ -326,11 +332,15 @@ export class SyncEngine {
 							const fileStat = await this.vault.adapter.stat(action.path);
 							const localMtime = fileStat?.mtime ?? Date.now();
 
+							// Use the greater of local mtime and remote modifiedTime
+							// to prevent re-downloading files that were deleted locally
+							const syncTime = Math.max(localMtime, action.remoteModifiedTime ?? localMtime);
+
 							state = upsertRecord(state, {
 								localPath: action.path,
 								driveFileId: action.driveFileId!,
 								driveFolderId: action.driveFolderId!,
-								lastSyncedTime: localMtime,
+								lastSyncedTime: syncTime,
 							});
 							stats.downloaded++;
 							break;

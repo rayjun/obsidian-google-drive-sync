@@ -79,6 +79,7 @@ describe("computeDiff", () => {
 				path: "a.md",
 				driveFileId: "d1",
 				driveFolderId: "f1",
+				remoteModifiedTime: 2000,
 			},
 		]);
 	});
@@ -137,6 +138,7 @@ describe("computeDiff", () => {
 				path: "a.md",
 				driveFileId: "d1",
 				driveFolderId: "f1",
+				remoteModifiedTime: 3000,
 			},
 		]);
 	});
@@ -174,6 +176,7 @@ describe("computeDiff", () => {
 				path: "new.md",
 				driveFileId: "d1",
 				driveFolderId: "f1",
+				remoteModifiedTime: 1000,
 			},
 		]);
 	});
@@ -254,6 +257,7 @@ describe("computeDiff", () => {
 				path: "a.md",
 				driveFileId: "d1",
 				driveFolderId: "f1",
+				remoteModifiedTime: 2000,
 			},
 		]);
 	});
