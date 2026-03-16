@@ -239,6 +239,10 @@ export class SyncEngine {
 				.filter((f) => !isExcluded(f.path, settings.excludePatterns))
 				.map((f) => ({ path: f.path, mtime: f.stat.mtime }));
 
+			console.log(
+				`[Google Drive Sync] Local files: ${localFiles.length} (total: ${allLocalFiles.length})`
+			);
+
 			// 3. List remote files (also populates folder IDs)
 			const remoteFolderIds: Record<string, string> = {};
 			const remoteEntries =
@@ -258,8 +262,17 @@ export class SyncEngine {
 					modifiedTime: new Date(e.file.modifiedTime).getTime(),
 				}));
 
+			console.log(
+				`[Google Drive Sync] Remote files: ${remoteFiles.length}`
+			);
+
 			// 4. Compute diff
 			const actions = computeDiff(localFiles, remoteFiles, state.records);
+
+			console.log(
+				`[Google Drive Sync] Actions: ${actions.length}`,
+				actions.map((a) => `${a.type}: ${a.path}`).join(", ")
+			);
 
 			// 5. Ensure all needed folders exist on Drive
 			const uploadPaths = actions
@@ -387,6 +400,7 @@ export class SyncEngine {
 						`[Google Drive Sync] Failed to ${action.type} ${action.path}:`,
 						err
 					);
+					new Notice(`Sync error: failed to ${action.type} ${action.path}`);
 					stats.errors++;
 				}
 			}
