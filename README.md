@@ -11,6 +11,7 @@ Bidirectional sync between your Obsidian vault and Google Drive.
 - Resumable uploads for large files (>5MB)
 - Configurable sync interval and exclude patterns
 - Works on both desktop and mobile
+- Duplicate file detection and cleanup on Google Drive
 
 ## Installation
 
@@ -65,6 +66,16 @@ Copy `manifest.json`, `main.js`, `styles.css` to `.obsidian/plugins/google-drive
 4. Sync starts automatically after login
 
 > On desktop, authorization completes automatically. On mobile, copy the authorization code from the browser and paste it in the plugin settings.
+
+## Usage
+
+### Remove Duplicate Files
+
+If duplicate files appear on Google Drive (e.g., due to interrupted syncs), you can clean them up:
+
+1. Open the command palette (`Cmd/Ctrl + P`)
+2. Search for **"Google Drive Sync: Remove duplicate files from Google Drive"**
+3. The plugin will scan for files with the same path, keep the newest copy, and delete the rest
 
 ## License
 
