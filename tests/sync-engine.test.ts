@@ -740,4 +740,53 @@ describe("SyncEngine", () => {
 		// root folder + notes + notes/daily + attachments + attachments/img = 5 calls
 		expect(driveApi.findOrCreateFolder).toHaveBeenCalledTimes(5);
 	});
+
+	it("does not delete parent folders that still have files in subdirectories", async () => {
+		// Scenario: delete "notes/a.md" but "notes/daily/b.md" still exists
+		// The "notes" folder should NOT be deleted
+		const vault = createMockVault([
+			{ path: "notes/daily/b.md", mtime: 1000 },
+		]);
+		const driveApi = createMockDriveApi([
+			{ relativePath: "notes/a.md", id: "d1", modifiedTime: new Date(1000).toISOString() },
+			{ relativePath: "notes/daily/b.md", id: "d2", modifiedTime: new Date(1000).toISOString() },
+		]);
+
+		// State: both files were previously synced, now "notes/a.md" is deleted locally
+		const state = createEmptySyncState();
+		state.records["notes/a.md"] = {
+			localPath: "notes/a.md",
+			driveFileId: "d1",
+			driveFolderId: "folder-notes",
+			lastSyncedTime: 1000,
+		};
+		state.records["notes/daily/b.md"] = {
+			localPath: "notes/daily/b.md",
+			driveFileId: "d2",
+			driveFolderId: "folder-daily",
+			lastSyncedTime: 1000,
+		};
+		state.driveFolderIds[""] = "root-folder-id";
+		state.driveFolderIds["notes"] = "folder-notes";
+		state.driveFolderIds["notes/daily"] = "folder-daily";
+
+		let savedState: SyncState | null = null;
+		const engine = new SyncEngine(
+			vault,
+			driveApi,
+			() => ({ driveFolderName: "Vault", excludePatterns: [] }),
+			() => state,
+			async (s) => { savedState = s; }
+		);
+
+		const stats = await engine.sync();
+
+		// "notes/a.md" should be deleted from Drive
+		expect(stats.deleted).toBe(1);
+		expect(driveApi.deleteFile).toHaveBeenCalledWith("d1");
+		// "notes" folder should NOT be deleted (still has "notes/daily/b.md")
+		expect(savedState!.driveFolderIds["notes"]).toBe("folder-notes");
+		// "notes/daily" folder should NOT be deleted
+		expect(savedState!.driveFolderIds["notes/daily"]).toBe("folder-daily");
+	});
 });

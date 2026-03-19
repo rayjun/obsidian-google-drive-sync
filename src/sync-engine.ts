@@ -418,9 +418,12 @@ export class SyncEngine {
 				const folderPathsToCheck =
 					collectFolderPaths(deletedPaths).reverse(); // deepest first
 				for (const folderPath of folderPathsToCheck) {
-					// Check if any remaining synced file uses this folder
+					// Check if any remaining synced file is inside this folder
+					// (either directly or in a subdirectory)
 					const hasFiles = Object.values(state.records).some(
-						(r) => getParentPath(r.localPath) === folderPath
+						(r) =>
+							getParentPath(r.localPath) === folderPath ||
+							r.localPath.startsWith(folderPath + "/")
 					);
 					if (!hasFiles) {
 						// Clean up remote folder
