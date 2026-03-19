@@ -55,6 +55,7 @@ npm run build
 
 1. 在 [Google Cloud Console](https://console.cloud.google.com/apis/credentials) 创建 OAuth 2.0 客户端（**桌面应用**类型）
 2. 启用 Google Drive API
+3. 在 **OAuth 同意屏幕 > 测试用户** 中添加你的 Google 账号（应用处于「测试」状态时需要）
 
 ## 配置
 

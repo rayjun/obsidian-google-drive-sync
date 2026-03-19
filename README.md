@@ -57,6 +57,7 @@ Copy `manifest.json`, `main.js`, `styles.css` to `.obsidian/plugins/google-drive
 
 1. Create an OAuth 2.0 client in [Google Cloud Console](https://console.cloud.google.com/apis/credentials) (choose **Desktop app** type)
 2. Enable the Google Drive API
+3. Add your Google account as a test user under **OAuth consent screen > Test users** (required while the app is in "Testing" status)
 
 ## Configuration
 

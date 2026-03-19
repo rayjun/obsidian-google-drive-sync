@@ -4,7 +4,7 @@ const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const REDIRECT_PORT = 42813;
 const LOCALHOST_REDIRECT_URI = `http://localhost:${REDIRECT_PORT}/callback`;
-const SCOPES = "https://www.googleapis.com/auth/drive.file";
+const SCOPES = "https://www.googleapis.com/auth/drive";
 
 export interface TokenResponse {
 	access_token: string;
