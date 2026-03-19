@@ -1,5 +1,6 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 import type GoogleDriveSyncPlugin from "./main";
+import type { SyncLogEntry } from "./main";
 
 export interface GoogleDriveSyncSettings {
 	clientId: string;
@@ -163,5 +164,62 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
 						this.debouncedSave();
 					})
 			);
+
+		// Sync History section
+		containerEl.createEl("h3", { text: "Sync History" });
+
+		const log = this.plugin.syncLog;
+		if (log.length === 0) {
+			containerEl.createEl("p", {
+				text: "No sync records yet.",
+				cls: "setting-item-description",
+			});
+		} else {
+			const table = containerEl.createEl("table", { cls: "gdrive-sync-log" });
+			const thead = table.createEl("thead");
+			const headerRow = thead.createEl("tr");
+			headerRow.createEl("th", { text: "Time" });
+			headerRow.createEl("th", { text: "↑ Up" });
+			headerRow.createEl("th", { text: "↓ Down" });
+			headerRow.createEl("th", { text: "🗑 Del" });
+			headerRow.createEl("th", { text: "Status" });
+
+			const tbody = table.createEl("tbody");
+			for (const entry of log) {
+				const row = tbody.createEl("tr");
+				row.createEl("td", { text: this.formatTime(entry.timestamp) });
+				row.createEl("td", { text: String(entry.uploaded) });
+				row.createEl("td", { text: String(entry.downloaded) });
+				row.createEl("td", { text: String(entry.deleted) });
+				if (entry.errorMessage) {
+					row.createEl("td", {
+						text: `✗ ${entry.errorMessage}`,
+						cls: "gdrive-sync-error",
+					});
+				} else if (entry.errors > 0) {
+					row.createEl("td", {
+						text: `✗ ${entry.errors} error(s)`,
+						cls: "gdrive-sync-error",
+					});
+				} else {
+					row.createEl("td", { text: "✓ OK" });
+				}
+			}
+		}
+	}
+
+	private formatTime(timestamp: number): string {
+		const date = new Date(timestamp);
+		const now = new Date();
+		const isToday =
+			date.getFullYear() === now.getFullYear() &&
+			date.getMonth() === now.getMonth() &&
+			date.getDate() === now.getDate();
+		const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+		if (isToday) {
+			return time;
+		}
+		const dateStr = date.toLocaleDateString([], { month: "short", day: "numeric" });
+		return `${dateStr} ${time}`;
 	}
 }

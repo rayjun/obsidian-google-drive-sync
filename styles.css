@@ -1,1 +1,27 @@
+.gdrive-sync-log {
+	width: 100%;
+	border-collapse: collapse;
+	font-size: 0.85em;
+	margin-top: 8px;
+}
 
+.gdrive-sync-log th,
+.gdrive-sync-log td {
+	padding: 6px 10px;
+	text-align: left;
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.gdrive-sync-log th {
+	font-weight: 600;
+	color: var(--text-muted);
+	font-size: 0.9em;
+}
+
+.gdrive-sync-log td {
+	color: var(--text-normal);
+}
+
+.gdrive-sync-error {
+	color: var(--text-error);
+}

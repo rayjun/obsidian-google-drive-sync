@@ -27,6 +27,17 @@ interface PendingOAuth {
 	expiry: number;
 }
 
+export interface SyncLogEntry {
+	timestamp: number;
+	uploaded: number;
+	downloaded: number;
+	deleted: number;
+	errors: number;
+	errorMessage?: string;
+}
+
+const MAX_SYNC_LOG_ENTRIES = 20;
+
 export default class GoogleDriveSyncPlugin extends Plugin {
 	settings: GoogleDriveSyncSettings = DEFAULT_SETTINGS;
 	private syncState: SyncState = createEmptySyncState();
@@ -37,11 +48,13 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 	private ribbonIconEl: HTMLElement | null = null;
 	private saveMutex: Promise<void> = Promise.resolve();
 	private pendingOAuth: PendingOAuth | null = null;
+	syncLog: SyncLogEntry[] = [];
 
 	async onload() {
 		await this.loadSettings();
 		await this.loadSyncState();
 		await this.loadPendingOAuth();
+		await this.loadSyncLog();
 
 		// Initialize Drive API with token provider
 		this.driveApi = new GoogleDriveApi(() => this.getValidAccessToken());
@@ -265,10 +278,25 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 			const statusMsg = `↑${stats.uploaded} ↓${stats.downloaded}${stats.errors > 0 ? ` ✗${stats.errors}` : ""} · just now`;
 			this.updateStatusBar(statusMsg);
 			this.setRibbonIcon("cloud");
+			this.addSyncLogEntry({
+				timestamp: Date.now(),
+				uploaded: stats.uploaded,
+				downloaded: stats.downloaded,
+				deleted: stats.deleted,
+				errors: stats.errors,
+			});
 		} catch (err) {
 			console.error("[Google Drive Sync] Sync error:", err);
 			this.updateStatusBar(`Error: ${(err as Error).message}`);
 			this.setRibbonIcon("cloud-off");
+			this.addSyncLogEntry({
+				timestamp: Date.now(),
+				uploaded: 0,
+				downloaded: 0,
+				deleted: 0,
+				errors: 1,
+				errorMessage: (err as Error).message,
+			});
 		}
 	}
 
@@ -361,6 +389,25 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 		return this.serializedSave(async (data) => {
 			data.syncState = this.syncState;
 		});
+	}
+
+	private async loadSyncLog(): Promise<void> {
+		const data = await this.loadData();
+		this.syncLog = Array.isArray(data?.syncLog) ? data.syncLog : [];
+	}
+
+	private async saveSyncLog(): Promise<void> {
+		return this.serializedSave(async (data) => {
+			data.syncLog = this.syncLog;
+		});
+	}
+
+	private addSyncLogEntry(entry: SyncLogEntry): void {
+		this.syncLog.unshift(entry);
+		if (this.syncLog.length > MAX_SYNC_LOG_ENTRIES) {
+			this.syncLog = this.syncLog.slice(0, MAX_SYNC_LOG_ENTRIES);
+		}
+		this.saveSyncLog();
 	}
 
 	private async loadPendingOAuth(): Promise<void> {
