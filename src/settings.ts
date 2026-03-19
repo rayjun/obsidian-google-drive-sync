@@ -1,6 +1,8 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, PluginSettingTab, Setting, setIcon } from "obsidian";
 import type GoogleDriveSyncPlugin from "./main";
 import type { SyncLogEntry } from "./main";
+import { t, resolveLocale, setLocale } from "./i18n";
+import type { LanguageSetting } from "./i18n";
 
 export interface GoogleDriveSyncSettings {
 	clientId: string;
@@ -11,6 +13,7 @@ export interface GoogleDriveSyncSettings {
 	syncInterval: number;
 	driveFolderName: string;
 	excludePatterns: string[];
+	language: LanguageSetting;
 }
 
 export const DEFAULT_SETTINGS: GoogleDriveSyncSettings = {
@@ -22,6 +25,7 @@ export const DEFAULT_SETTINGS: GoogleDriveSyncSettings = {
 	syncInterval: 5,
 	driveFolderName: "Obsidian-Vault",
 	excludePatterns: [".obsidian/**", ".DS_Store", "Thumbs.db"],
+	language: "auto",
 };
 
 export class GoogleDriveSyncSettingTab extends PluginSettingTab {
@@ -40,48 +44,114 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
 		}, 500);
 	}
 
+	/**
+	 * Create a password-style text input with a toggle visibility button.
+	 */
+	private addMaskedText(
+		setting: Setting,
+		placeholder: string,
+		value: string,
+		onChange: (value: string) => void
+	): void {
+		setting.addText((text) => {
+			text
+				.setPlaceholder(placeholder)
+				.setValue(value)
+				.onChange(onChange);
+			text.inputEl.type = "password";
+			text.inputEl.style.fontFamily = "monospace";
+		});
+
+		setting.addExtraButton((button) => {
+			button.setIcon("eye");
+			button.setTooltip("Toggle visibility");
+			button.onClick(() => {
+				const input = setting.settingEl.querySelector(
+					"input"
+				) as HTMLInputElement;
+				if (input) {
+					const isHidden = input.type === "password";
+					input.type = isHidden ? "text" : "password";
+					setIcon(
+						button.extraSettingsEl,
+						isHidden ? "eye-off" : "eye"
+					);
+				}
+			});
+		});
+	}
+
 	display(): void {
+		// Resolve and set locale before rendering
+		setLocale(resolveLocale(this.plugin.settings.language));
+
 		const { containerEl } = this;
 		containerEl.empty();
 
-		containerEl.createEl("h2", { text: "Google Drive Sync Settings" });
+		containerEl.createEl("h2", { text: t("settings.title") });
+
+		// Language setting (at the top)
+		new Setting(containerEl)
+			.setName(t("settings.language"))
+			.setDesc(t("settings.languageDesc"))
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOption("auto", t("settings.languageAuto"))
+					.addOption("en", "English")
+					.addOption("zh", "中文")
+					.setValue(this.plugin.settings.language)
+					.onChange(async (value) => {
+						this.plugin.settings.language = value as LanguageSetting;
+						await this.plugin.saveSettings();
+						// Re-render with new locale
+						this.display();
+					})
+			);
 
 		// Google Account section
-		containerEl.createEl("h3", { text: "Google Account" });
+		containerEl.createEl("h3", { text: t("settings.googleAccount") });
 
-		new Setting(containerEl)
-			.setName("Client ID")
-			.setDesc("OAuth 2.0 Client ID from Google Cloud Console")
-			.addText((text) =>
-				text
-					.setPlaceholder("Enter Client ID")
-					.setValue(this.plugin.settings.clientId)
-					.onChange((value) => {
-						this.plugin.settings.clientId = value;
-						this.debouncedSave();
-					})
-			);
+		const clientIdSetting = new Setting(containerEl)
+			.setName(t("settings.clientId"))
+			.setDesc(t("settings.clientIdDesc"));
+		this.addMaskedText(
+			clientIdSetting,
+			t("settings.clientIdPlaceholder"),
+			this.plugin.settings.clientId,
+			(value) => {
+				this.plugin.settings.clientId = value;
+				this.debouncedSave();
+			}
+		);
 
-		new Setting(containerEl)
-			.setName("Client Secret")
-			.setDesc("OAuth 2.0 Client Secret from Google Cloud Console")
-			.addText((text) =>
-				text
-					.setPlaceholder("Enter Client Secret")
-					.setValue(this.plugin.settings.clientSecret)
-					.onChange((value) => {
-						this.plugin.settings.clientSecret = value;
-						this.debouncedSave();
-					})
-			);
+		const clientSecretSetting = new Setting(containerEl)
+			.setName(t("settings.clientSecret"))
+			.setDesc(t("settings.clientSecretDesc"));
+		this.addMaskedText(
+			clientSecretSetting,
+			t("settings.clientSecretPlaceholder"),
+			this.plugin.settings.clientSecret,
+			(value) => {
+				this.plugin.settings.clientSecret = value;
+				this.debouncedSave();
+			}
+		);
 
 		const isLoggedIn = !!this.plugin.settings.refreshToken;
 		new Setting(containerEl)
-			.setName("Authentication")
-			.setDesc(isLoggedIn ? "Logged in to Google Drive" : "Not logged in")
+			.setName(t("settings.authentication"))
+			.setDesc(
+				isLoggedIn
+					? t("settings.loggedIn")
+					: t("settings.notLoggedIn")
+			)
 			.addButton((button) =>
 				button
-					.setButtonText(isLoggedIn ? "Logout" : "Login to Google Drive")
+					.setButtonText(
+						isLoggedIn
+							? t("settings.logoutButton")
+							: t("settings.loginButton")
+					)
 					.onClick(async () => {
 						if (isLoggedIn) {
 							this.plugin.settings.accessToken = "";
@@ -98,32 +168,34 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
 		// Manual auth code fallback
 		if (!isLoggedIn && this.plugin.hasPendingOAuth()) {
 			new Setting(containerEl)
-				.setName("Paste authorization code")
-				.setDesc(
-					"If the automatic redirect didn't work, paste the authorization code here"
-				)
+				.setName(t("settings.pasteAuthCode"))
+				.setDesc(t("settings.pasteAuthCodeDesc"))
 				.addText((text) =>
 					text.setPlaceholder("4/0Axx...").onChange(() => {})
 				)
 				.addButton((button) =>
-					button.setButtonText("Submit").onClick(async () => {
-						const input = containerEl.querySelector(
-							'input[placeholder="4/0Axx..."]'
-						) as HTMLInputElement;
-						if (input?.value) {
-							await this.plugin.handleManualAuthCode(input.value);
-							this.display();
-						}
-					})
+					button
+						.setButtonText(t("settings.submitButton"))
+						.onClick(async () => {
+							const input = containerEl.querySelector(
+								'input[placeholder="4/0Axx..."]'
+							) as HTMLInputElement;
+							if (input?.value) {
+								await this.plugin.handleManualAuthCode(
+									input.value
+								);
+								this.display();
+							}
+						})
 				);
 		}
 
 		// Sync section
-		containerEl.createEl("h3", { text: "Sync Settings" });
+		containerEl.createEl("h3", { text: t("settings.syncSettings") });
 
 		new Setting(containerEl)
-			.setName("Sync interval")
-			.setDesc("How often to sync (in minutes)")
+			.setName(t("settings.syncInterval"))
+			.setDesc(t("settings.syncIntervalDesc"))
 			.addSlider((slider) =>
 				slider
 					.setLimits(1, 60, 1)
@@ -137,8 +209,8 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Drive folder name")
-			.setDesc("Root folder name on Google Drive")
+			.setName(t("settings.driveFolderName"))
+			.setDesc(t("settings.driveFolderNameDesc"))
 			.addText((text) =>
 				text
 					.setPlaceholder("Obsidian-Vault")
@@ -150,8 +222,8 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Exclude patterns")
-			.setDesc("Glob patterns to exclude (one per line)")
+			.setName(t("settings.excludePatterns"))
+			.setDesc(t("settings.excludePatternsDesc"))
 			.addTextArea((text) =>
 				text
 					.setPlaceholder(".obsidian/**\n.DS_Store")
@@ -166,28 +238,32 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
 			);
 
 		// Sync History section
-		containerEl.createEl("h3", { text: "Sync History" });
+		containerEl.createEl("h3", { text: t("settings.syncHistory") });
 
 		const log = this.plugin.syncLog;
 		if (log.length === 0) {
 			containerEl.createEl("p", {
-				text: "No sync records yet.",
+				text: t("settings.noSyncRecords"),
 				cls: "setting-item-description",
 			});
 		} else {
-			const table = containerEl.createEl("table", { cls: "gdrive-sync-log" });
+			const table = containerEl.createEl("table", {
+				cls: "gdrive-sync-log",
+			});
 			const thead = table.createEl("thead");
 			const headerRow = thead.createEl("tr");
-			headerRow.createEl("th", { text: "Time" });
-			headerRow.createEl("th", { text: "↑ Up" });
-			headerRow.createEl("th", { text: "↓ Down" });
-			headerRow.createEl("th", { text: "🗑 Del" });
-			headerRow.createEl("th", { text: "Status" });
+			headerRow.createEl("th", { text: t("settings.headerTime") });
+			headerRow.createEl("th", { text: t("settings.headerUp") });
+			headerRow.createEl("th", { text: t("settings.headerDown") });
+			headerRow.createEl("th", { text: t("settings.headerDel") });
+			headerRow.createEl("th", { text: t("settings.headerStatus") });
 
 			const tbody = table.createEl("tbody");
 			for (const entry of log) {
 				const row = tbody.createEl("tr");
-				row.createEl("td", { text: this.formatTime(entry.timestamp) });
+				row.createEl("td", {
+					text: this.formatTime(entry.timestamp),
+				});
 				row.createEl("td", { text: String(entry.uploaded) });
 				row.createEl("td", { text: String(entry.downloaded) });
 				row.createEl("td", { text: String(entry.deleted) });
@@ -198,11 +274,13 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
 					});
 				} else if (entry.errors > 0) {
 					row.createEl("td", {
-						text: `✗ ${entry.errors} error(s)`,
+						text: t("settings.statusErrors", {
+							count: entry.errors,
+						}),
 						cls: "gdrive-sync-error",
 					});
 				} else {
-					row.createEl("td", { text: "✓ OK" });
+					row.createEl("td", { text: t("settings.statusOk") });
 				}
 			}
 		}
@@ -215,11 +293,18 @@ export class GoogleDriveSyncSettingTab extends PluginSettingTab {
 			date.getFullYear() === now.getFullYear() &&
 			date.getMonth() === now.getMonth() &&
 			date.getDate() === now.getDate();
-		const time = date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+		const time = date.toLocaleTimeString([], {
+			hour: "2-digit",
+			minute: "2-digit",
+			second: "2-digit",
+		});
 		if (isToday) {
 			return time;
 		}
-		const dateStr = date.toLocaleDateString([], { month: "short", day: "numeric" });
+		const dateStr = date.toLocaleDateString([], {
+			month: "short",
+			day: "numeric",
+		});
 		return `${dateStr} ${time}`;
 	}
 }

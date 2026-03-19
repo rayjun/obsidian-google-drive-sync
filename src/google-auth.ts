@@ -1,4 +1,5 @@
 import { Platform, requestUrl } from "obsidian";
+import { t } from "./i18n";
 
 const GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth";
 const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
@@ -106,7 +107,7 @@ export function listenForAuthCode(expectedState: string): Promise<string> {
 
 			if (state !== expectedState) {
 				res.end(
-					"<html><body><h1>Authorization failed</h1><p>Invalid state parameter (possible CSRF attack).</p></body></html>"
+					`<html><body><h1>${t("auth.failedTitle")}</h1><p>${t("auth.invalidState")}</p></body></html>`
 				);
 				server.close();
 				settle(() =>
@@ -117,13 +118,13 @@ export function listenForAuthCode(expectedState: string): Promise<string> {
 
 			if (code) {
 				res.end(
-					"<html><body><h1>Authorization successful!</h1><p>You can close this window.</p></body></html>"
+					`<html><body><h1>${t("auth.successTitle")}</h1><p>${t("auth.successBody")}</p></body></html>`
 				);
 				server.close();
 				settle(() => resolve(code));
 			} else {
 				res.end(
-					`<html><body><h1>Authorization failed</h1><p>${error ?? "Unknown error"}</p></body></html>`
+					`<html><body><h1>${t("auth.failedTitle")}</h1><p>${error ?? "Unknown error"}</p></body></html>`
 				);
 				server.close();
 				settle(() =>

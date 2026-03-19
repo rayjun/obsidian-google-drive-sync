@@ -20,6 +20,7 @@ import {
 	createEmptySyncState,
 	isStateOutdated,
 } from "./sync-state";
+import { t, resolveLocale, setLocale } from "./i18n";
 
 interface PendingOAuth {
 	state: string;
@@ -56,6 +57,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 		await this.loadPendingOAuth();
 		await this.loadSyncLog();
 
+		// Set locale from settings
+		setLocale(resolveLocale(this.settings.language));
+
 		// Initialize Drive API with token provider
 		this.driveApi = new GoogleDriveApi(() => this.getValidAccessToken());
 
@@ -81,12 +85,12 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
 		// Status bar
 		this.statusBarEl = this.addStatusBarItem();
-		this.updateStatusBar("Idle");
+		this.updateStatusBar(t("status.idle"));
 
 		// Commands
 		this.addCommand({
 			id: "sync-now",
-			name: "Sync now",
+			name: t("command.syncNow"),
 			callback: async () => {
 				await this.runSync();
 			},
@@ -94,7 +98,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
 		this.addCommand({
 			id: "login",
-			name: "Login to Google Drive",
+			name: t("command.login"),
 			callback: async () => {
 				await this.startOAuthFlow();
 			},
@@ -102,19 +106,19 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
 		this.addCommand({
 			id: "logout",
-			name: "Logout",
+			name: t("command.logout"),
 			callback: async () => {
 				this.settings.accessToken = "";
 				this.settings.refreshToken = "";
 				this.settings.tokenExpiry = 0;
 				await this.saveSettings();
-				new Notice("Logged out of Google Drive.");
+				new Notice(t("notice.loggedOut"));
 			},
 		});
 
 		this.addCommand({
 			id: "deduplicate",
-			name: "Remove duplicate files from Google Drive",
+			name: t("command.deduplicate"),
 			callback: async () => {
 				await this.runDeduplicate();
 			},
@@ -137,9 +141,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
 	async startOAuthFlow(): Promise<void> {
 		if (!this.settings.clientId || !this.settings.clientSecret) {
-			new Notice(
-				"Please set Client ID and Client Secret in settings first."
-			);
+			new Notice(t("notice.setClientFirst"));
 			return;
 		}
 
@@ -164,20 +166,20 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 			if (Platform.isMobile) {
 				// Mobile: open browser, user copies auth code back manually
 				window.open(authUrl);
-				new Notice(
-					"Please complete authorization in the browser, then paste the authorization code in plugin settings."
-				);
+				new Notice(t("notice.mobileAuth"));
 			} else {
 				// Desktop: localhost callback server
 				const codePromise = listenForAuthCode(state);
 				window.open(authUrl);
-				new Notice("Waiting for Google authorization...");
+				new Notice(t("notice.waitingAuth"));
 				const code = await codePromise;
 				await this.completeOAuth(code);
 			}
 		} catch (err) {
 			console.error("[Google Drive Sync] OAuth error:", err);
-			new Notice(`Login failed: ${(err as Error).message}`);
+			new Notice(
+				t("notice.loginFailed", { message: (err as Error).message })
+			);
 		}
 	}
 
@@ -198,7 +200,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 		await this.saveSettings();
 		await this.clearPendingOAuth();
 
-		new Notice("Successfully logged in to Google Drive!");
+		new Notice(t("notice.loginSuccess"));
 		this.startSyncTimer();
 	}
 
@@ -207,13 +209,13 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 	 */
 	async handleManualAuthCode(code: string): Promise<void> {
 		if (!this.pendingOAuth) {
-			new Notice("No pending login. Please start the login flow first.");
+			new Notice(t("notice.noPendingLogin"));
 			return;
 		}
 
 		if (Date.now() > this.pendingOAuth.expiry) {
 			await this.clearPendingOAuth();
-			new Notice("Login timed out. Please try again.");
+			new Notice(t("notice.loginTimeout"));
 			return;
 		}
 
@@ -222,7 +224,9 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 		} catch (err) {
 			console.error("[Google Drive Sync] Manual auth code error:", err);
 			await this.clearPendingOAuth();
-			new Notice(`Login failed: ${(err as Error).message}`);
+			new Notice(
+				t("notice.loginFailed", { message: (err as Error).message })
+			);
 		}
 	}
 
@@ -236,7 +240,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 		}
 
 		if (!this.settings.refreshToken) {
-			throw new Error("No refresh token. Please log in again.");
+			throw new Error(t("notice.noRefreshToken"));
 		}
 
 		try {
@@ -255,9 +259,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 			return this.settings.accessToken;
 		} catch (err) {
 			console.error("[Google Drive Sync] Token refresh failed:", err);
-			new Notice(
-				"Google Drive token refresh failed. Please log in again."
-			);
+			new Notice(t("notice.tokenRefreshFailed"));
 			throw err;
 		}
 	}
@@ -266,11 +268,11 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
 	private async runSync(): Promise<void> {
 		if (!this.settings.refreshToken) {
-			new Notice("Please log in to Google Drive first.");
+			new Notice(t("notice.pleaseLogin"));
 			return;
 		}
 
-		this.updateStatusBar("Syncing...");
+		this.updateStatusBar(t("status.syncing"));
 		this.setRibbonIcon("refresh-cw");
 
 		try {
@@ -302,11 +304,11 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
 	private async runDeduplicate(): Promise<void> {
 		if (!this.settings.refreshToken) {
-			new Notice("Please log in to Google Drive first.");
+			new Notice(t("notice.pleaseLogin"));
 			return;
 		}
 
-		new Notice("Scanning for duplicate files on Google Drive...");
+		new Notice(t("notice.scanning"));
 
 		try {
 			const rootFolderId = await this.driveApi.findOrCreateFolder(
@@ -314,13 +316,19 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 			);
 			const deleted = await this.driveApi.deduplicateFiles(rootFolderId);
 			if (deleted > 0) {
-				new Notice(`Removed ${deleted} duplicate file(s) from Google Drive.`);
+				new Notice(
+					t("notice.removedDuplicates", { count: deleted })
+				);
 			} else {
-				new Notice("No duplicate files found on Google Drive.");
+				new Notice(t("notice.noDuplicates"));
 			}
 		} catch (err) {
 			console.error("[Google Drive Sync] Deduplicate error:", err);
-			new Notice(`Deduplicate failed: ${(err as Error).message}`);
+			new Notice(
+				t("notice.deduplicateFailed", {
+					message: (err as Error).message,
+				})
+			);
 		}
 	}
 
@@ -352,7 +360,7 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
 	private updateStatusBar(status: string): void {
 		if (this.statusBarEl) {
-			this.statusBarEl.setText(`Google Drive: ${status}`);
+			this.statusBarEl.setText(`${t("status.prefix")}${status}`);
 		}
 	}
 

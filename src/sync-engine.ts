@@ -8,6 +8,9 @@ import {
 } from "./sync-state";
 import { isExcluded, getParentPath, collectFolderPaths } from "./utils";
 
+/** Maximum number of files to process concurrently in each batch. */
+const BATCH_SIZE = 5;
+
 export interface LocalFile {
 	path: string;
 	mtime: number;
@@ -190,6 +193,17 @@ export function computeDiff(
 	return actions;
 }
 
+/**
+ * Split an array into chunks of the given size.
+ */
+function chunk<T>(array: T[], size: number): T[][] {
+	const chunks: T[][] = [];
+	for (let i = 0; i < array.length; i += size) {
+		chunks.push(array.slice(i, i + size));
+	}
+	return chunks;
+}
+
 export class SyncEngine {
 	private syncInProgress = false;
 
@@ -273,7 +287,7 @@ export class SyncEngine {
 				actions.map((a) => `${a.type}: ${a.path}`).join(", ")
 			);
 
-			// 5. Ensure all needed folders exist on Drive
+			// 5. Ensure all needed folders exist on Drive (must be sequential — parent before child)
 			const uploadPaths = actions
 				.filter((a) => a.type === "upload")
 				.map((a) => a.path);
@@ -292,114 +306,106 @@ export class SyncEngine {
 				}
 			}
 
-			// 6. Execute actions
-			for (const action of actions) {
-				try {
-					switch (action.type) {
-						case "upload": {
-							const content = await this.vault.adapter.readBinary(
-								action.path
-							);
-							const fileName = action.path.split("/").pop()!;
-							const parentPath = getParentPath(action.path);
-							const parentFolderId =
-								state.driveFolderIds[parentPath] ?? rootFolderId;
+			// 6. Group actions by type and execute concurrently in batches
+			const uploads = actions.filter((a) => a.type === "upload");
+			const downloads = actions.filter((a) => a.type === "download");
+			const deletes = actions.filter(
+				(a) => a.type === "delete_remote" || a.type === "delete_local"
+			);
+			const recordRemovals = actions.filter(
+				(a) => a.type === "remove_record"
+			);
 
-							const driveFile = await this.driveApi.uploadFile(
-								content,
-								fileName,
-								parentFolderId,
-								action.driveFileId
-							);
+			// 6a. Remove stale records (fast, no I/O)
+			for (const action of recordRemovals) {
+				state = removeRecord(state, action.path);
+			}
 
-							// Use the greater of local mtime and remote modifiedTime
-							// to prevent clock skew from causing duplicate uploads
-							const fileStat = await this.vault.adapter.stat(action.path);
-							const localMtime = fileStat?.mtime ?? Date.now();
-							const remoteMtime = new Date(driveFile.modifiedTime).getTime();
-							const syncTime = Math.max(localMtime, remoteMtime);
-
-							state = upsertRecord(state, {
-								localPath: action.path,
-								driveFileId: driveFile.id,
-								driveFolderId: parentFolderId,
-								lastSyncedTime: syncTime,
-							});
+			// 6b. Execute uploads in concurrent batches
+			if (uploads.length > 0) {
+				const batches = chunk(uploads, BATCH_SIZE);
+				let completed = 0;
+				for (const batch of batches) {
+					const results = await Promise.allSettled(
+						batch.map((action) =>
+							this.executeUpload(action, state, rootFolderId)
+						)
+					);
+					for (let i = 0; i < results.length; i++) {
+						const result = results[i]!;
+						if (result.status === "fulfilled") {
+							state = upsertRecord(state, result.value);
 							stats.uploaded++;
-							break;
-						}
-
-						case "download": {
-							const content = await this.driveApi.downloadFile(
-								action.driveFileId!
+						} else {
+							console.error(
+								`[Google Drive Sync] Failed to upload ${batch[i]!.path}:`,
+								result.reason
 							);
-							// Ensure full directory hierarchy exists locally
-							const parentPath = getParentPath(action.path);
-							if (parentPath) {
-								const parts = parentPath.split("/");
-								let current = "";
-								for (const part of parts) {
-									current = current ? `${current}/${part}` : part;
-									const exists =
-										await this.vault.adapter.exists(current);
-									if (!exists) {
-										await this.vault.adapter.mkdir(current);
-									}
-								}
-							}
-							await this.vault.adapter.writeBinary(
-								action.path,
-								content
-							);
-
-							// Use the actual file mtime after writing to avoid clock skew
-							const fileStat = await this.vault.adapter.stat(action.path);
-							const localMtime = fileStat?.mtime ?? Date.now();
-
-							// Use the greater of local mtime and remote modifiedTime
-							// to prevent re-downloading files that were deleted locally
-							const syncTime = Math.max(localMtime, action.remoteModifiedTime ?? localMtime);
-
-							state = upsertRecord(state, {
-								localPath: action.path,
-								driveFileId: action.driveFileId!,
-								driveFolderId: action.driveFolderId!,
-								lastSyncedTime: syncTime,
-							});
-							stats.downloaded++;
-							break;
-						}
-
-						case "delete_remote": {
-							await this.driveApi.deleteFile(action.driveFileId!);
-							state = removeRecord(state, action.path);
-							stats.deleted++;
-							break;
-						}
-
-						case "delete_local": {
-							const exists = await this.vault.adapter.exists(
-								action.path
-							);
-							if (exists) {
-								await this.vault.adapter.remove(action.path);
-							}
-							state = removeRecord(state, action.path);
-							stats.deleted++;
-							break;
-						}
-
-						case "remove_record": {
-							state = removeRecord(state, action.path);
-							break;
+							stats.errors++;
 						}
 					}
-				} catch (err) {
-					console.error(
-						`[Google Drive Sync] Failed to ${action.type} ${action.path}:`,
-						err
+					completed += batch.length;
+					// Save intermediate state after each batch so progress is preserved
+					if (batches.length > 1) {
+						console.log(
+							`[Google Drive Sync] Upload progress: ${completed}/${uploads.length}`
+						);
+						await this.saveSyncState(state);
+					}
+				}
+			}
+
+			// 6c. Execute downloads in concurrent batches
+			if (downloads.length > 0) {
+				const batches = chunk(downloads, BATCH_SIZE);
+				let completed = 0;
+				for (const batch of batches) {
+					const results = await Promise.allSettled(
+						batch.map((action) => this.executeDownload(action))
 					);
-					stats.errors++;
+					for (let i = 0; i < results.length; i++) {
+						const result = results[i]!;
+						if (result.status === "fulfilled") {
+							state = upsertRecord(state, result.value);
+							stats.downloaded++;
+						} else {
+							console.error(
+								`[Google Drive Sync] Failed to download ${batch[i]!.path}:`,
+								result.reason
+							);
+							stats.errors++;
+						}
+					}
+					completed += batch.length;
+					if (batches.length > 1) {
+						console.log(
+							`[Google Drive Sync] Download progress: ${completed}/${downloads.length}`
+						);
+						await this.saveSyncState(state);
+					}
+				}
+			}
+
+			// 6d. Execute deletes in concurrent batches
+			if (deletes.length > 0) {
+				const batches = chunk(deletes, BATCH_SIZE);
+				for (const batch of batches) {
+					const results = await Promise.allSettled(
+						batch.map((action) => this.executeDelete(action))
+					);
+					for (let i = 0; i < results.length; i++) {
+						const result = results[i]!;
+						if (result.status === "fulfilled") {
+							state = removeRecord(state, batch[i]!.path);
+							stats.deleted++;
+						} else {
+							console.error(
+								`[Google Drive Sync] Failed to ${batch[i]!.type} ${batch[i]!.path}:`,
+								result.reason
+							);
+							stats.errors++;
+						}
+					}
 				}
 			}
 
@@ -456,6 +462,95 @@ export class SyncEngine {
 			return stats;
 		} finally {
 			this.syncInProgress = false;
+		}
+	}
+
+	/**
+	 * Execute a single upload action. Returns a SyncRecord on success.
+	 */
+	private async executeUpload(
+		action: SyncAction,
+		state: SyncState,
+		rootFolderId: string
+	): Promise<SyncRecord> {
+		const content = await this.vault.adapter.readBinary(action.path);
+		const fileName = action.path.split("/").pop()!;
+		const parentPath = getParentPath(action.path);
+		const parentFolderId =
+			state.driveFolderIds[parentPath] ?? rootFolderId;
+
+		const driveFile = await this.driveApi.uploadFile(
+			content,
+			fileName,
+			parentFolderId,
+			action.driveFileId
+		);
+
+		// Use the greater of local mtime and remote modifiedTime
+		// to prevent clock skew from causing duplicate uploads
+		const fileStat = await this.vault.adapter.stat(action.path);
+		const localMtime = fileStat?.mtime ?? Date.now();
+		const remoteMtime = new Date(driveFile.modifiedTime).getTime();
+		const syncTime = Math.max(localMtime, remoteMtime);
+
+		return {
+			localPath: action.path,
+			driveFileId: driveFile.id,
+			driveFolderId: parentFolderId,
+			lastSyncedTime: syncTime,
+		};
+	}
+
+	/**
+	 * Execute a single download action. Returns a SyncRecord on success.
+	 */
+	private async executeDownload(action: SyncAction): Promise<SyncRecord> {
+		const content = await this.driveApi.downloadFile(action.driveFileId!);
+		// Ensure full directory hierarchy exists locally
+		const parentPath = getParentPath(action.path);
+		if (parentPath) {
+			const parts = parentPath.split("/");
+			let current = "";
+			for (const part of parts) {
+				current = current ? `${current}/${part}` : part;
+				const exists = await this.vault.adapter.exists(current);
+				if (!exists) {
+					await this.vault.adapter.mkdir(current);
+				}
+			}
+		}
+		await this.vault.adapter.writeBinary(action.path, content);
+
+		// Use the actual file mtime after writing to avoid clock skew
+		const fileStat = await this.vault.adapter.stat(action.path);
+		const localMtime = fileStat?.mtime ?? Date.now();
+
+		// Use the greater of local mtime and remote modifiedTime
+		// to prevent re-downloading files that were deleted locally
+		const syncTime = Math.max(
+			localMtime,
+			action.remoteModifiedTime ?? localMtime
+		);
+
+		return {
+			localPath: action.path,
+			driveFileId: action.driveFileId!,
+			driveFolderId: action.driveFolderId!,
+			lastSyncedTime: syncTime,
+		};
+	}
+
+	/**
+	 * Execute a single delete action (remote or local).
+	 */
+	private async executeDelete(action: SyncAction): Promise<void> {
+		if (action.type === "delete_remote") {
+			await this.driveApi.deleteFile(action.driveFileId!);
+		} else if (action.type === "delete_local") {
+			const exists = await this.vault.adapter.exists(action.path);
+			if (exists) {
+				await this.vault.adapter.remove(action.path);
+			}
 		}
 	}
 }
