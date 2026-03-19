@@ -262,14 +262,12 @@ export default class GoogleDriveSyncPlugin extends Plugin {
 
 		try {
 			const stats = await this.syncEngine.sync();
-			const msg = `Google Drive sync complete (${stats.uploaded} uploaded, ${stats.downloaded} downloaded${stats.errors > 0 ? `, ${stats.errors} errors` : ""})`;
-			new Notice(msg);
-			this.updateStatusBar("Last sync: just now");
+			const statusMsg = `↑${stats.uploaded} ↓${stats.downloaded}${stats.errors > 0 ? ` ✗${stats.errors}` : ""} · just now`;
+			this.updateStatusBar(statusMsg);
 			this.setRibbonIcon("cloud");
 		} catch (err) {
 			console.error("[Google Drive Sync] Sync error:", err);
-			new Notice(`Google Drive sync failed: ${(err as Error).message}`);
-			this.updateStatusBar("Error");
+			this.updateStatusBar(`Error: ${(err as Error).message}`);
 			this.setRibbonIcon("cloud-off");
 		}
 	}

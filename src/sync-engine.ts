@@ -1,4 +1,3 @@
-import { Notice } from "obsidian";
 import type { Vault } from "obsidian";
 import { GoogleDriveApi } from "./google-drive-api";
 import {
@@ -216,7 +215,7 @@ export class SyncEngine {
 		errors: number;
 	}> {
 		if (this.syncInProgress) {
-			new Notice("Sync already in progress.");
+			console.log("[Google Drive Sync] Sync already in progress, skipping.");
 			return { uploaded: 0, downloaded: 0, deleted: 0, errors: 0 };
 		}
 
@@ -400,7 +399,6 @@ export class SyncEngine {
 						`[Google Drive Sync] Failed to ${action.type} ${action.path}:`,
 						err
 					);
-					new Notice(`Sync error: failed to ${action.type} ${action.path}`);
 					stats.errors++;
 				}
 			}
